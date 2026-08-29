@@ -78,6 +78,14 @@ type real;
 // and rejects a bare marker. Operators are polymorphic in `W` (see the wrappers
 // below), so each family is one op over `bv W` rather than one per width.
 type bv (n : Type);
+// Compact concrete-width spellings remain accepted for existing Core programs.
+// `translateLMonoTy` normalizes each to the corresponding `bv W…` type.
+type bv1;
+type bv8;
+type bv16;
+type bv32;
+type bv64;
+type bv128;
 type W1;
 type W8;
 type W16;

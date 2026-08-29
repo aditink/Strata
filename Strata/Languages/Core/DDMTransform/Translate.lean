@@ -397,6 +397,14 @@ partial def translateLMonoTy (bindings : TransBindings) (arg : Arg) :
       TransM.recordError s!"bitvector width marker used outside `bv`: {repr tp}" (.bitvec 8)
   | .ident _ q`Core.bv argst =>
       TransM.recordError s!"`bv` expects a width marker `W1 … W128`, got {repr argst}" (.bitvec 8)
+  -- Compact aliases are established Core surface syntax.  They normalize
+  -- directly to the same canonical bitvector type as `bv W…`.
+  | .ident _ q`Core.bv1 #[] => pure <| .bitvec 1
+  | .ident _ q`Core.bv8 #[] => pure <| .bitvec 8
+  | .ident _ q`Core.bv16 #[] => pure <| .bitvec 16
+  | .ident _ q`Core.bv32 #[] => pure <| .bitvec 32
+  | .ident _ q`Core.bv64 #[] => pure <| .bitvec 64
+  | .ident _ q`Core.bv128 #[] => pure <| .bitvec 128
   | .ident _ i argst =>
       let argst' ← translateLMonoTys bindings (argst.map ArgF.type)
       pure <| (.tcons i.name argst'.toList.reverse)
