@@ -19,6 +19,7 @@ import Strata.Languages.C_Simp.Verify
 import Strata.Languages.Core
 import Strata.Languages.Core.DDMTransform.Translate
 import Strata.Languages.Core.ProgramEval
+public import Strata.DL.SMT.DatatypeEncoding
 
 -- For some reason shake wants to meta import the following
 -- while lake itself only requires imports.
@@ -158,14 +159,23 @@ def genCoreVCs (program : Program)
     none
 
 /--
-Remove solver-side caches that destabilize definitional equality in metaprograms.
+Remove solver-side caches that destabilize definitional equality in metaprograms,
+after replacing the datatype theory with its axiomatization.
 
-At the moment this is semantically harmless for denotation because
-`Strata.DL.SMT.Denote.denoteQuery` rejects contexts with datatype machinery
-(`datatypes`, `seenDatatypes`, `datatypeFuns`) populated anyway.
+Dropping `datatypes`/`seenDatatypes`/`datatypeFuns` used to be harmless only
+because `denoteQuery` refused such contexts outright. It now costs something, so
+`SMT.DatatypeEncoding.encode` first turns each datatype into an uninterpreted
+sort, uninterpreted constructor/tester/selector functions, and axioms relating
+them. Callers must rewrite the obligation's terms with the same encoding, or
+they will still mention `Op.datatype_op` heads that have no denotation.
 -/
-private def sanitizeSMTContext (ctx : Core.SMT.Context) : SMT.SanitizedContext :=
-  SMT.SanitizedContext.ofCore ctx
+private def sanitizeSMTContext (ctx : Core.SMT.Context)
+    (enc : SMT.DatatypeEncoding.Encoding) : SMT.SanitizedContext :=
+  let base := SMT.SanitizedContext.ofCore ctx
+  { base with
+    sorts := base.sorts ++ enc.sorts
+    ufs := base.ufs ++ enc.ufs
+    axms := base.axms ++ enc.axms }
 
 def Core.ProofObligation.toSMTObligation (E : Core.Env) (ob : Imperative.ProofObligation Core.Expression)
   (options : MetaVerifier.Options := {}) :
@@ -182,7 +192,10 @@ def Core.ProofObligation.toSMTObligation (E : Core.Env) (ob : Imperative.ProofOb
       -- For denotational semantics, variable definitions are equivalent to equalities
       let defAssumptions := varDefs.map fun d =>
         Strata.SMT.Factory.eq (.app (.uf ⟨d.name, [], d.ty⟩) [] d.ty) d.body
-      (ob.label, sanitizeSMTContext ctx, defAssumptions ++ ts, t)
+      let enc := SMT.DatatypeEncoding.encode ctx
+      let rewrite := SMT.DatatypeEncoding.rewriteTerm enc
+      (ob.label, sanitizeSMTContext ctx enc,
+       (defAssumptions ++ ts).map rewrite, rewrite t)
 
 /--
 Interpret a list of SMT verification conditions as the conjunction of their
