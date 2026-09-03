@@ -88,14 +88,16 @@ deriving Inhabited
 def datatypeTy (d : LDatatype CoreIDMeta) : TermType :=
   .constr d.name []
 
-/-- Whether `denoteSort` can interpret this type.
+/-- Whether a payload type can be given a denotation, possibly after later
+abstraction passes.
 
-Mirrors `denotePrimSort`, which has no Lean image for reals (Strata has no real
-type available), regexes, or triggers. A constructor carrying such a payload is
-still given a tester, but no constructor or selector function -- see
-`constrFuns`. -/
+Reals count as denotable even though `denotePrimSort` rejects them:
+`SMT.RealAbstraction` runs downstream and turns them into an uninterpreted
+sort, and it rewrites the signatures produced here in step with the terms.
+Regexes and triggers have no such treatment, so a constructor carrying one is
+still given a tester and nothing else -- see `constrFuns`. -/
 partial def denotableTy : TermType → Bool
-  | .prim .real | .prim .regex | .prim .trigger => false
+  | .prim .regex | .prim .trigger => false
   | .prim _ => true
   | .option ty => denotableTy ty
   | .constr _ args => args.all denotableTy

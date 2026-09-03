@@ -20,6 +20,7 @@ import Strata.Languages.Core
 import Strata.Languages.Core.DDMTransform.Translate
 import Strata.Languages.Core.ProgramEval
 public import Strata.DL.SMT.DatatypeEncoding
+public import Strata.DL.SMT.RealAbstraction
 
 -- For some reason shake wants to meta import the following
 -- while lake itself only requires imports.
@@ -166,16 +167,23 @@ Dropping `datatypes`/`seenDatatypes`/`datatypeFuns` used to be harmless only
 because `denoteQuery` refused such contexts outright. It now costs something, so
 `SMT.DatatypeEncoding.encode` first turns each datatype into an uninterpreted
 sort, uninterpreted constructor/tester/selector functions, and axioms relating
-them. Callers must rewrite the obligation's terms with the same encoding, or
-they will still mention `Op.datatype_op` heads that have no denotation.
+them.
+
+Every term the context carries is rewritten with that same encoding: the
+program's own axioms and the bodies of its defined functions mention
+constructors and selectors just as the goal does, and one missed occurrence
+leaves an `Op.datatype_op` head with no denotation. The caller must rewrite the
+goal and assumptions to match.
 -/
 private def sanitizeSMTContext (ctx : Core.SMT.Context)
     (enc : SMT.DatatypeEncoding.Encoding) : SMT.SanitizedContext :=
   let base := SMT.SanitizedContext.ofCore ctx
+  let rewrite := SMT.DatatypeEncoding.rewriteTerm enc
   { base with
     sorts := base.sorts ++ enc.sorts
     ufs := base.ufs ++ enc.ufs
-    axms := base.axms ++ enc.axms }
+    ifs := base.ifs.map fun f => { f with body := rewrite f.body }
+    axms := base.axms.map rewrite ++ enc.axms }
 
 def Core.ProofObligation.toSMTObligation (E : Core.Env) (ob : Imperative.ProofObligation Core.Expression)
   (options : MetaVerifier.Options := {}) :
@@ -194,8 +202,29 @@ def Core.ProofObligation.toSMTObligation (E : Core.Env) (ob : Imperative.ProofOb
         Strata.SMT.Factory.eq (.app (.uf ⟨d.name, [], d.ty⟩) [] d.ty) d.body
       let enc := SMT.DatatypeEncoding.encode ctx
       let rewrite := SMT.DatatypeEncoding.rewriteTerm enc
-      (ob.label, sanitizeSMTContext ctx enc,
-       (defAssumptions ++ ts).map rewrite, rewrite t)
+      let sanitized := sanitizeSMTContext ctx enc
+      -- Reals last: it has to see the datatype axioms too, since a constructor
+      -- can carry a real and its axioms would then mention one.
+      let (terms, ufs, reals) :=
+        SMT.RealAbstraction.abstractAll
+          (#[rewrite t] ++ ((defAssumptions ++ ts).map rewrite).toArray ++ sanitized.axms)
+          sanitized.ufs
+      let goal := terms[0]!
+      let assumptions := terms.extract 1 (terms.size - sanitized.axms.size)
+      let axms := terms.extract (terms.size - sanitized.axms.size) terms.size
+      let ifs := sanitized.ifs.map fun f =>
+        { f with
+          args := f.args.map fun v =>
+            { v with ty := SMT.RealAbstraction.abstractTy v.ty }
+          out := SMT.RealAbstraction.abstractTy f.out
+          body := SMT.RealAbstraction.abstractTerm f.body }
+      (ob.label,
+       { sanitized with
+         sorts := sanitized.sorts ++ reals.sorts
+         ufs := ufs ++ reals.ufs
+         ifs := ifs
+         axms := axms },
+       assumptions.toList, goal)
 
 /--
 Interpret a list of SMT verification conditions as the conjunction of their
