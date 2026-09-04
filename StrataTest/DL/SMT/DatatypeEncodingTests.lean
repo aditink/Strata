@@ -43,11 +43,12 @@ spec {
 };
 #end
 
--- The datatype becomes one uninterpreted sort; its constructors, testers, and
--- selectors become uninterpreted functions alongside the program's own variables.
+-- The datatype becomes one uninterpreted sort; its constructors and selectors
+-- become uninterpreted functions alongside the program's own variables. There
+-- are no tester functions: `Val..isVInt v` is rewritten to `$dt.tag.Val v = 0`.
 /--
 info: sorts: #[{ name := "Val", arity := 0 }]
-functions: #["v@1", "dflt@1", "VInt", "VBool", "VNone", "is-VInt", "is-VBool", "is-VNone", "Val..getInt", "Val..getBool"]
+functions: #["v@1", "dflt@1", "$dt.tag.Val", "VInt", "VBool", "VNone", "Val..getInt", "Val..getBool"]
 -/
 #guard_msgs in
 #eval show IO Unit from do

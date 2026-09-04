@@ -64,12 +64,17 @@ carries. Core forbids a function and a constructor sharing a name, so this
 cannot capture a user function. -/
 def ctorName (constr : String) : String := constr
 
-/-- The uninterpreted predicate standing for a constructor's tester.
+/-- The integer-valued function naming which constructor a value was built with.
 
-`Op.datatype_op .tester` carries the *constructor* name, not the tester name, so
-this derives the same name the encoder would have emitted to the solver. `-` is
-not legal in a Core identifier, so this cannot collide with a user function. -/
-def testerName (constr : String) : String := "is-" ++ constr
+Testers are not functions at all: `is-C v` is rewritten to `tag v = i`. That
+choice is what makes the encoding usable. A tester modelled as an uninterpreted
+`D -> bool` denotes to a `Prop`, so every `if is-C v then ..` in the program
+becomes a classically-decidable `ite` that `grind` will not split cheaply --
+and the Laurel coercions are built from chains of a dozen such tests. Against
+an integer tag the same conditions are decidable equalities, which linear
+arithmetic settles. Mutual exclusivity also stops being an axiom: an integer
+cannot equal two distinct literals. -/
+def tagName (datatype : String) : String := "$dt.tag." ++ datatype
 
 /-- The uninterpreted function standing for a selector.
 
@@ -82,11 +87,18 @@ structure Encoding where
   sorts : Array Strata.DL.SMT.Sort := #[]
   ufs : Array UF := #[]
   axms : Array Term := #[]
+  /-- Constructor name to its datatype's tag function and its own index, used
+  to rewrite tester applications into tag comparisons. -/
+  testerTags : Array (String × UF × Nat) := #[]
 deriving Inhabited
 
 /-- A monomorphic datatype's own sort. -/
 def datatypeTy (d : LDatatype CoreIDMeta) : TermType :=
   .constr d.name []
+
+/-- The tag function for one datatype. -/
+def tagUF (d : LDatatype CoreIDMeta) : UF :=
+  { id := tagName d.name, args := [datatypeTy d], out := .prim .int }
 
 /-- Whether a payload type can be given a denotation, possibly after later
 abstraction passes.
@@ -151,7 +163,6 @@ structure ConstrPayload where
   fieldVars : List (String × TermType)
 
 structure ConstrFuns where
-  tester : UF
   payload : Option ConstrPayload
 
 /-- Resolve one constructor's functions. Always succeeds: a constructor whose
@@ -159,67 +170,63 @@ payload is not denotable yields a tester alone. -/
 def constrFuns (d : LDatatype CoreIDMeta) (c : LConstr CoreIDMeta)
     (ctx : CoreCtx) : ConstrFuns × CoreCtx :=
   let dTy := datatypeTy d
-  let tester : UF :=
-    { id := testerName c.name.name, args := [dTy], out := .prim .bool }
   match constrFieldTys c ctx with
-  | none => ({ tester, payload := none }, ctx)
+  | none => ({ payload := none }, ctx)
   | some (fieldTys, ctx) =>
     let ctor : UF := { id := ctorName c.name.name, args := fieldTys, out := dTy }
     let selectors :=
       (c.args.zip fieldTys).map fun ((field, _), fieldTy) =>
         ({ id := selectorName d.name field.name, args := [dTy], out := fieldTy } : UF)
-    ({ tester
-       payload := some { ctor, selectors, fieldVars := (fieldVarNames c).zip fieldTys } }, ctx)
+    ({ payload := some { ctor, selectors, fieldVars := (fieldVarNames c).zip fieldTys } }, ctx)
 
 /-- Axioms tying one constructor to its tester and selectors.
 
-- `is-C (C x⃗)` -- the tester accepts its own constructor.
-- `¬ is-D (C x⃗)` for every other constructor `D` -- and rejects the others.
+- `tag (C x⃗) = i` -- the constructor's index, which is what makes its tester
+  true and every other constructor's tester false.
 - `sel_i (C x⃗) = x_i` -- selectors invert the constructor.
 
-Empty for a constructor with no denotable payload: every one of these mentions
-the constructor function, which does not exist in that case. -/
-def constrAxioms (funs : ConstrFuns) (otherTesters : List UF) : List Term :=
+Empty for a constructor with no denotable payload: both mention the constructor
+function, which does not exist in that case. -/
+def constrAxioms (tag : UF) (index : Nat) (funs : ConstrFuns) : List Term :=
   match funs.payload with
   | none => []
   | some p =>
     let args := p.fieldVars.map (fun (n, ty) => Term.var ⟨n, ty⟩)
     let applied := applyUF p.ctor args
-    let ownTester := forallVars p.fieldVars (applyUF funs.tester [applied])
-    let otherTesterAxioms :=
-      otherTesters.map fun tester =>
-        forallVars p.fieldVars (Factory.not (applyUF tester [applied]))
+    let tagged :=
+      forallVars p.fieldVars
+        (Factory.eq (applyUF tag [applied]) (Term.prim (.int index)))
     let selectorAxioms :=
       (p.selectors.zip args).map fun (sel, arg) =>
         forallVars p.fieldVars (Factory.eq (applyUF sel [applied]) arg)
-    ownTester :: otherTesterAxioms ++ selectorAxioms
+    tagged :: selectorAxioms
 
 /-- Axioms about an arbitrary value of the datatype.
 
-- Some tester holds -- the constructors are exhaustive.
-- At most one tester holds -- they are mutually exclusive.
-- `is-C v → v = C (sel₁ v) … (selₖ v)` -- a value accepted by a tester is that
-  constructor applied to its own selectors. With exhaustiveness this makes every
-  value a constructor application, which is what gives injectivity. -/
-def valueAxioms (d : LDatatype CoreIDMeta) (funs : List ConstrFuns) : List Term :=
+- `0 ≤ tag v ≤ n-1` -- the tag names one of the constructors, which is
+  exhaustiveness. Mutual exclusivity needs no axiom: an integer cannot equal two
+  distinct literals.
+- `tag v = i → v = Cᵢ (sel₁ v) … (selₖ v)` -- a value carrying a constructor's
+  tag is that constructor applied to its own selectors. With the tag bounds this
+  makes every value a constructor application, which is what gives
+  injectivity. -/
+def valueAxioms (d : LDatatype CoreIDMeta) (tag : UF) (funs : List ConstrFuns) :
+    List Term :=
   let dTy := datatypeTy d
   let v : Term := .var ⟨"$dt_v", dTy⟩
   let quantify (body : Term) : Term := forallVars [("$dt_v", dTy)] body
-  let testers := funs.map (fun f => applyUF f.tester [v])
-  let exhaustive :=
-    match testers with
-    | [] => []
-    | t :: ts => [quantify (ts.foldl Factory.or t)]
-  let exclusive :=
-    (testers.zipIdx.flatMap fun (ti, i) =>
-      testers.zipIdx.filterMap fun (tj, j) =>
-        if i < j then some (quantify (Factory.not (Factory.and ti tj))) else none)
+  let tagOf := applyUF tag [v]
+  let tagInRange :=
+    [quantify (Factory.and
+      (Factory.intLe (Term.prim (.int 0)) tagOf)
+      (Factory.intLe tagOf (Term.prim (.int (funs.length - 1)))))]
   let shape :=
-    funs.filterMap fun f =>
+    funs.zipIdx.filterMap fun (f, i) =>
       f.payload.map fun p =>
         let rebuilt := applyUF p.ctor (p.selectors.map (fun sel => applyUF sel [v]))
-        quantify (Factory.implies (applyUF f.tester [v]) (Factory.eq v rebuilt))
-  exhaustive ++ exclusive ++ shape
+        quantify (Factory.implies (Factory.eq tagOf (Term.prim (.int i)))
+          (Factory.eq v rebuilt))
+  tagInRange ++ shape
 
 /-- Encode every monomorphic datatype in `ctx` as sorts, functions, and axioms.
 
@@ -228,17 +235,15 @@ def encode (ctx : CoreCtx) : Encoding :=
   ctx.datatypes.factory.allDatatypes.foldl (init := {}) fun enc d =>
     if !d.typeArgs.isEmpty then enc else
     let funs := collectConstrs d d.constrs ctx []
-    let testers := funs.map (·.tester)
-    let perConstr :=
-      funs.zipIdx.flatMap fun (f, i) =>
-        constrAxioms f (testers.zipIdx.filterMap fun (t, j) =>
-          if i == j then none else some t)
+    let tag := tagUF d
+    let perConstr := funs.zipIdx.flatMap fun (f, i) => constrAxioms tag i f
     { sorts := enc.sorts.push { name := d.name, arity := 0 }
-      ufs := enc.ufs
+      ufs := (enc.ufs.push tag)
         ++ (funs.filterMap (fun f => f.payload.map (·.ctor))).toArray
-        ++ testers.toArray
         ++ (funs.flatMap (fun f => (f.payload.map (·.selectors)).getD [])).toArray
-      axms := enc.axms ++ (perConstr ++ valueAxioms d funs).toArray }
+      axms := enc.axms ++ (perConstr ++ valueAxioms d tag funs).toArray
+      testerTags := enc.testerTags
+        ++ (d.constrs.zipIdx.map fun (c, i) => (c.name.name, tag, i)).toArray }
 where
   collectConstrs (d : LDatatype CoreIDMeta)
       (cs : List (LConstr CoreIDMeta)) (ctx : CoreCtx)
@@ -249,24 +254,34 @@ where
       let (funs, ctx') := constrFuns d c ctx
       collectConstrs d rest ctx' (funs :: acc)
 
-/-- Look up the uninterpreted function a datatype operation stands for.
+/-- Look up the uninterpreted function a constructor or selector stands for.
 
 `none` for an operation that is not one of `ctx`'s datatypes -- `Option` and set
 operations reach here under the same `Op.datatype_op` head and must be left for
-their own handling. -/
+their own handling. Testers are not looked up here; they become tag comparisons
+in `rewriteTerm`. -/
 def resolveOp (enc : Encoding) (kind : Op.DatatypeFuncs) (name : String) : Option UF :=
-  let wanted := match kind with
-    | .constructor => ctorName name
-    | .tester => testerName name
-    | .selector => name
-  enc.ufs.find? (·.id == wanted)
+  match kind with
+  | .tester => none
+  | .constructor => enc.ufs.find? (·.id == ctorName name)
+  | .selector => enc.ufs.find? (·.id == name)
 
-/-- Replace datatype operations by their uninterpreted functions.
+/-- The tag comparison a tester application becomes, if the constructor is one
+we encoded. -/
+def resolveTester (enc : Encoding) (name : String) (arg : Term) : Option Term :=
+  enc.testerTags.find? (fun (c, _, _) => c == name) |>.map fun (_, tag, index) =>
+    Factory.eq (applyUF tag [arg]) (Term.prim (.int index))
 
-The argument and result types already sit on the term, so the rewrite is purely
-a change of head symbol. -/
+/-- Replace datatype operations by their uninterpreted counterparts.
+
+Constructors and selectors keep their shape and only change head symbol, since
+the argument and result types already sit on the term. A tester instead becomes
+an equation on the datatype's tag. -/
 partial def rewriteTerm (enc : Encoding) (t : Term) : Term :=
   match t with
+  | .app (.datatype_op .tester name) [arg] retTy =>
+    let arg := rewriteTerm enc arg
+    (resolveTester enc name arg).getD (.app (.datatype_op .tester name) [arg] retTy)
   | .app (.datatype_op kind name) args retTy =>
     let args := args.map (rewriteTerm enc)
     match resolveOp enc kind name with
