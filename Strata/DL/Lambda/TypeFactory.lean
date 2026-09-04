@@ -428,6 +428,31 @@ def elimConcreteEval {T: LExprParams} [BEq T.Identifier] [Inhabited T.IDMeta] (b
       | none => none
     | _ => none
 
+/-- Evaluate a generated eliminator once constructor matching and case
+selection have been established. This isolates the semantic selector step from
+datatype-specific proofs of `matchConstr`. -/
+theorem elimConcreteEval_of_matchConstr
+    {T : LExprParams} [BEq T.Identifier] [Inhabited T.IDMeta]
+    (block : MutualDatatype T.IDMeta)
+    (metadata callMetadata : T.Metadata)
+    (value caseFunction : LExpr T.mono)
+    (cases constructorArguments : List (LExpr T.mono))
+    (recursiveArguments : List (LExpr T.mono × LMonoTy))
+    (datatypeIndex constructorIndex : Nat)
+    (constructor : LConstr T.IDMeta)
+    (matched : matchConstr block value = some
+      (datatypeIndex, constructorIndex, constructor,
+        constructorArguments, recursiveArguments))
+    (selected : cases[blockConstrIdx block datatypeIndex constructorIndex]? =
+      some caseFunction) :
+    elimConcreteEval block metadata callMetadata (value :: cases) =
+      some (caseFunction.mkApp metadata
+        (constructorArguments ++ recursiveArguments.filterMap
+          (fun (argument, type) =>
+            elimRecCall block argument type cases metadata))) := by
+  simp [elimConcreteEval, matched, selected]
+
+
 /--
 Generate eliminators for all datatypes in a mutual block.
 Each datatype gets its own eliminator, but they share case function arguments
