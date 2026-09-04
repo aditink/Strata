@@ -130,6 +130,18 @@ structure Options where
   /-- Use SMT-LIB Array theory for `Map` types instead of an uninterpreted
   sort with axiomatized `select`/`update` functions. -/
   useArrayTheory : Bool := true
+  /-- Keep only the verification conditions carrying these labels.
+
+  `smtVCsCorrect` otherwise means "every obligation in the whole program holds",
+  which is the wrong question when one named contract is under study: the
+  obligations of unrelated procedures, and the auto-generated safety checks of
+  this one, all become the caller's problem. Naming a label narrows the
+  statement to that contract.
+
+  `none` keeps everything, so the default is unchanged. A label that matches
+  nothing yields no obligations and `smtVCsCorrect` holds vacuously -- check the
+  label against `genSMTVCs` output if a proof looks suspiciously easy. -/
+  onlyLabels : Option (List String) := none
 
 /--
 Interpret metaverifier options as options for the Core verification pipeline.
@@ -259,7 +271,10 @@ Generate SMT verification conditions for a `StrataDDM.Program`.
 def genSMTVCs (program : Program)
     (options : MetaVerifier.Options := {}) : Option SMT.SMTVCs := do
   let coreVCs ← genCoreVCs program options
-  toSMTVCs coreVCs options
+  let vcs ← toSMTVCs coreVCs options
+  match options.onlyLabels with
+  | none => return vcs
+  | some labels => return vcs.filter (fun (label, _, _, _) => labels.contains label)
 
 /--
 State semantic correctness of the SMT verification conditions generated for a
