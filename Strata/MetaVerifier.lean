@@ -8,6 +8,7 @@ module
 import Strata.Transform.LoopElim
 import Strata.Transform.InsertLoopInvariantAsserts
 import Strata.Transform.NondetElim
+import Strata.Transform.CallElim
 import Strata.Languages.Core.ObligationExtraction
 public import Strata.Languages.C_Simp.C_Simp
 public import Strata.Languages.Core.SMTEncoder
@@ -79,7 +80,14 @@ abbrev coreVCs := List (Env × Imperative.ProofObligation Expression)
 
 def genVCs (program : Program) (options : VerifyOptions := .default) : Option coreVCs := do
   let transform : Transform.CoreTransformM (Bool × Program) := do
-    let (_, program') ← insertLoopInvariantAsserts program
+    -- callElim first: without it a `call` contributes nothing, because the
+    -- callee's postcondition is never assumed at the call site. Any property of
+    -- a procedure that calls another -- every recursive one included -- is then
+    -- unprovable, since the results of its own calls stay unconstrained. The
+    -- solver-backed pipeline in `Verifier.transformPipelinePhases` has always
+    -- run this phase; the metaverifier was simply missing it.
+    let (_, programC) ← CallElim.callElim' program
+    let (_, program') ← insertLoopInvariantAsserts programC
     let (_, program'') ← loopElim program'
     -- nondetElim must run before symbolic evaluation, which rejects surviving
     -- nondeterministic guards.
