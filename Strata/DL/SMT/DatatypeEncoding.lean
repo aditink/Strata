@@ -24,20 +24,34 @@ explicit axioms over those functions. Since `denoteQuery` already interprets
 uninterpreted sorts, uninterpreted functions, and axioms, the result needs no
 new denotation machinery.
 
-## What is and is not captured
+## No axioms, and why
 
-The axioms in `datatypeAxioms` say that the constructors tile the sort: testers
-are exhaustive and mutually exclusive, selectors invert their constructor, and a
-value satisfying a tester is that constructor applied to its own selectors.
-Together these give injectivity and disjointness of constructors.
+An earlier version of this module also *asserted* the datatype laws -- that
+constructors are injective and disjoint, that selectors invert them, that the
+tags are exhaustive. That was unsound in practice: on the Laurel prelude the
+resulting set was contradictory, and `1 == 2` became provable for a program as
+small as
 
-They deliberately omit any *induction* principle, and with it acyclicity. So a
-recursive datatype is modelled as its possibly-infinite completion: for
-`ListAny`, the axioms are all satisfied by an infinite list, and a property
-provable only by structural induction stays out of reach. This is sound -- every
-theorem proved from these axioms holds of the real datatype -- but incomplete.
-For a tagged union like `Any` the axioms are complete in practice, since the
-interesting facts are about which tag holds and what it carries.
+    def g(n: int) -> int:
+        return n
+
+Each family of laws was individually satisfiable; some combination of them was
+not. The bug is not in any one law but in the approach -- describing a datatype
+by asserting its properties, rather than exhibiting one and letting the
+properties be theorems.
+
+So this module now declares only *signatures*: a sort per datatype, and
+uninterpreted functions for its constructors, selectors, and tag. Nothing is
+assumed, so nothing can be inconsistent. The cost is real and should not be
+understated: with no laws relating them, almost no property of a datatype-using
+program is provable. Deciding `if is-C v then ..` needs `tag (C x) = i`, and
+that is exactly the kind of fact no longer available.
+
+The fix is to construct rather than describe -- generate a Lean `inductive` per
+Core datatype and denote the sort to it, so the laws hold by construction and
+structural induction comes for free. That requires `denoteSort` and
+`translateQuery` to resolve a datatype sort to a concrete type instead of a
+bound sort variable, and is tracked separately.
 
 Polymorphic datatypes are skipped: their field types mention type variables that
 the ground `TermType` language cannot express. All of the Laurel prelude's
@@ -86,7 +100,6 @@ def selectorName (datatype field : String) : String := datatype ++ ".." ++ field
 structure Encoding where
   sorts : Array Strata.DL.SMT.Sort := #[]
   ufs : Array UF := #[]
-  axms : Array Term := #[]
   /-- Constructor name to its datatype's tag function and its own index, used
   to rewrite tester applications into tag comparisons. -/
   testerTags : Array (String × UF × Nat) := #[]
@@ -131,21 +144,9 @@ where
       | .error _ => none
       | .ok (ty', ctx') => if denotableTy ty' then go rest ctx' (ty' :: acc) else none
 
-/-- Bound-variable names for one constructor's fields.
-
-Prefixed so they cannot shadow a program variable appearing in the same axiom. -/
-def fieldVarNames (c : LConstr CoreIDMeta) : List String :=
-  c.args.zipIdx.map (fun (_, i) => s!"$dt_x{i}")
-
 /-- Apply an uninterpreted function to arguments. -/
 def applyUF (uf : UF) (args : List Term) : Term :=
   .app (.core (.uf uf)) args uf.out
-
-/-- Universally quantify `body` over `vars`. -/
-def forallVars (vars : List (String × TermType)) (body : Term) : Term :=
-  vars.foldr
-    (fun (name, ty) acc => Factory.quant .all name ty (Factory.mkSimpleTrigger name ty) acc)
-    body
 
 /-- The functions modelling one constructor.
 
@@ -159,8 +160,6 @@ structure ConstrPayload where
   ctor : UF
   /-- One selector per field, in declaration order. -/
   selectors : List UF
-  /-- Bound variable name and type per field, for quantifying the axioms. -/
-  fieldVars : List (String × TermType)
 
 structure ConstrFuns where
   payload : Option ConstrPayload
@@ -177,56 +176,7 @@ def constrFuns (d : LDatatype CoreIDMeta) (c : LConstr CoreIDMeta)
     let selectors :=
       (c.args.zip fieldTys).map fun ((field, _), fieldTy) =>
         ({ id := selectorName d.name field.name, args := [dTy], out := fieldTy } : UF)
-    ({ payload := some { ctor, selectors, fieldVars := (fieldVarNames c).zip fieldTys } }, ctx)
-
-/-- Axioms tying one constructor to its tester and selectors.
-
-- `tag (C x⃗) = i` -- the constructor's index, which is what makes its tester
-  true and every other constructor's tester false.
-- `sel_i (C x⃗) = x_i` -- selectors invert the constructor.
-
-Empty for a constructor with no denotable payload: both mention the constructor
-function, which does not exist in that case. -/
-def constrAxioms (tag : UF) (index : Nat) (funs : ConstrFuns) : List Term :=
-  match funs.payload with
-  | none => []
-  | some p =>
-    let args := p.fieldVars.map (fun (n, ty) => Term.var ⟨n, ty⟩)
-    let applied := applyUF p.ctor args
-    let tagged :=
-      forallVars p.fieldVars
-        (Factory.eq (applyUF tag [applied]) (Term.prim (.int index)))
-    let selectorAxioms :=
-      (p.selectors.zip args).map fun (sel, arg) =>
-        forallVars p.fieldVars (Factory.eq (applyUF sel [applied]) arg)
-    tagged :: selectorAxioms
-
-/-- Axioms about an arbitrary value of the datatype.
-
-- `0 ≤ tag v ≤ n-1` -- the tag names one of the constructors, which is
-  exhaustiveness. Mutual exclusivity needs no axiom: an integer cannot equal two
-  distinct literals.
-- `tag v = i → v = Cᵢ (sel₁ v) … (selₖ v)` -- a value carrying a constructor's
-  tag is that constructor applied to its own selectors. With the tag bounds this
-  makes every value a constructor application, which is what gives
-  injectivity. -/
-def valueAxioms (d : LDatatype CoreIDMeta) (tag : UF) (funs : List ConstrFuns) :
-    List Term :=
-  let dTy := datatypeTy d
-  let v : Term := .var ⟨"$dt_v", dTy⟩
-  let quantify (body : Term) : Term := forallVars [("$dt_v", dTy)] body
-  let tagOf := applyUF tag [v]
-  let tagInRange :=
-    [quantify (Factory.and
-      (Factory.intLe (Term.prim (.int 0)) tagOf)
-      (Factory.intLe tagOf (Term.prim (.int (funs.length - 1)))))]
-  let shape :=
-    funs.zipIdx.filterMap fun (f, i) =>
-      f.payload.map fun p =>
-        let rebuilt := applyUF p.ctor (p.selectors.map (fun sel => applyUF sel [v]))
-        quantify (Factory.implies (Factory.eq tagOf (Term.prim (.int i)))
-          (Factory.eq v rebuilt))
-  tagInRange ++ shape
+    ({ payload := some { ctor, selectors } }, ctx)
 
 /-- Encode every monomorphic datatype in `ctx` as sorts, functions, and axioms.
 
@@ -236,12 +186,10 @@ def encode (ctx : CoreCtx) : Encoding :=
     if !d.typeArgs.isEmpty then enc else
     let funs := collectConstrs d d.constrs ctx []
     let tag := tagUF d
-    let perConstr := funs.zipIdx.flatMap fun (f, i) => constrAxioms tag i f
     { sorts := enc.sorts.push { name := d.name, arity := 0 }
       ufs := (enc.ufs.push tag)
         ++ (funs.filterMap (fun f => f.payload.map (·.ctor))).toArray
         ++ (funs.flatMap (fun f => (f.payload.map (·.selectors)).getD [])).toArray
-      axms := enc.axms ++ (perConstr ++ valueAxioms d tag funs).toArray
       testerTags := enc.testerTags
         ++ (d.constrs.zipIdx.map fun (c, i) => (c.name.name, tag, i)).toArray }
 where

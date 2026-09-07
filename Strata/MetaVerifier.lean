@@ -187,7 +187,9 @@ Dropping `datatypes`/`seenDatatypes`/`datatypeFuns` used to be harmless only
 because `denoteQuery` refused such contexts outright. It now costs something, so
 `SMT.DatatypeEncoding.encode` first turns each datatype into an uninterpreted
 sort, uninterpreted constructor/tester/selector functions, and axioms relating
-them.
+them. The encoding declares signatures only and asserts nothing: an earlier
+version also emitted the datatype laws as axioms, and on the Laurel prelude that
+set turned out to be contradictory.
 
 Every term the context carries is rewritten with that same encoding: the
 program's own axioms and the bodies of its defined functions mention
@@ -203,7 +205,7 @@ private def sanitizeSMTContext (ctx : Core.SMT.Context)
     sorts := base.sorts ++ enc.sorts
     ufs := base.ufs ++ enc.ufs
     ifs := base.ifs.map fun f => { f with body := rewrite f.body }
-    axms := base.axms.map rewrite ++ enc.axms }
+    axms := base.axms.map rewrite }
 
 def Core.ProofObligation.toSMTObligation (E : Core.Env) (ob : Imperative.ProofObligation Core.Expression)
   (options : MetaVerifier.Options := {}) :
