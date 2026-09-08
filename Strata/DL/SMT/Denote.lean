@@ -1484,3 +1484,65 @@ noncomputable def denoteQuerySupplying (ctx : Core.SMT.Context) (nSorts nUFs : N
   let split := ctx.ufs.toList.length - nUFs
   (denoteBoolTermSupplying (uss.take nSorts) (uss.drop nSorts)
     (ufs.take split) (ufs.drop split) ifs t sΓ hsΓ ufΓ hufΓ).map PLift.down
+
+/-- An interpretation of a fixed group of sorts and functions.
+
+Packaged separately from any one query because the datatype symbols are the
+same for every verification condition a program generates, while the program
+variables around them are not. `ufΓ` is therefore parameterised over the bound
+sort context: the same interpretation applies to each VC, whatever else that VC
+quantifies over. -/
+structure SuppliedInterp where
+  /-- Sorts interpreted, in binder order. Must be the leading sorts of the
+  query's context. -/
+  uss : USContext
+  sΓ : SortEnvironment
+  hsΓ : USEnvironment.WF uss sΓ
+  /-- Functions interpreted, in binder order. Must be the trailing functions of
+  the query's context. -/
+  ufs : UFContext
+  ufΓ : (ussBind : USContext) → (bound : SortDenoteInput ⟨ussBind, []⟩) →
+    UFEnvironment (⟨sΓ ++ bound.sΓ, USEnvironment.wfAppend hsΓ bound.hsΓ⟩ :
+      SortDenoteInput ⟨uss ++ ussBind, []⟩)
+  hufΓ : ∀ ussBind bound, (ufΓ ussBind bound).WF ufs
+
+/-- `denoteBoolTermSupplying` at an interpretation, once its context is known to
+be the one `I` interprets.
+
+The lists come in as parameters rather than as projections of `I` so that the
+equations can be `subst`ed. Rewriting them in place does not work: `▸` hits
+every occurrence, including the `I.uss.length` that selects how much of the
+context to take. -/
+@[simp]
+noncomputable def denoteBoolTermIn (I : SuppliedInterp)
+    (ussSupply ussBind : USContext) (ufsBind ufsSupply : UFContext)
+    (huss : ussSupply = I.uss) (hufs : ufsSupply = I.ufs)
+    (ifs : List IF) (t : Term) : Option (PLift Prop) :=
+  denoteBoolTermSupplying ussSupply ussBind ufsBind ufsSupply ifs t I.sΓ
+    (by subst huss; exact I.hsΓ)
+    (by subst huss; exact I.ufΓ ussBind)
+    (by subst huss; subst hufs; exact I.hufΓ ussBind)
+
+/-- Interpret a query under `I`, quantifying over everything `I` does not fix.
+
+`none` unless the query's context really does lead with `I.uss` and trail with
+`I.ufs`; a mismatch means the interpretation is for a different program and
+silently quantifying instead would hide that. -/
+@[simp]
+noncomputable def denoteQueryIn (I : SuppliedInterp) (ctx : Core.SMT.Context)
+    (assums : List Term) (conc : Term) : Option Prop := do
+  if !ctx.datatypes.factory.isEmpty || !ctx.seenDatatypes.isEmpty
+      || !ctx.datatypeFuns.isEmpty then none
+  if !ctx.tySubst.isEmpty then none
+  let uss := ctx.sorts.toList.reverse
+  let ufs := ctx.ufs.toList.reverse
+  let split := ufs.length - I.ufs.length
+  if huss : uss.take I.uss.length = I.uss then
+    if hufs : ufs.drop split = I.ufs then
+      let stmt := assums.foldr (.app .implies [·, ·] (.prim .bool)) conc
+      let t := ctx.axms.toList.foldr (.app .implies [·, ·] (.prim .bool)) stmt
+      let ifs := ctx.ifs.toList.reverse
+      (denoteBoolTermIn I (uss.take I.uss.length) (uss.drop I.uss.length)
+        (ufs.take split) (ufs.drop split) huss hufs ifs t).map PLift.down
+    else none
+  else none

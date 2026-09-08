@@ -14,7 +14,7 @@ public import Strata.Languages.C_Simp.C_Simp
 public import Strata.Languages.Core.SMTEncoder
 import Std.Tactic.BVDecide.Normalize.Prop
 import Strata.DL.Lambda.Denote.LExprAnnotated
-import Strata.DL.SMT.Denote
+public import Strata.DL.SMT.Denote
 import Strata.Languages.C_Simp.DDMTransform.Translate
 import Strata.Languages.C_Simp.Verify
 import Strata.Languages.Core
@@ -304,6 +304,45 @@ def smtVCsCorrect (program : Program)
   | some vcs => (denoteQueries vcs).getD False
   | none     => False
 
+/--
+Interpret a list of verification conditions under a fixed interpretation of the
+datatype symbols, as the conjunction of their denotations.
+-/
+noncomputable def denoteQueriesIn (I : SuppliedInterp) (vcs : SMT.SMTVCs) : Option Prop := do
+  match vcs with
+  | [] => return True
+  | (_, ctx, ts, t) :: vcs =>
+    let p ← denoteQueryIn I ctx.toCore ts t
+    go vcs p
+where
+  go vcs p : Option Prop := do
+  match vcs with
+  | [] => return p
+  | (_, ctx, ts, t) :: vcs =>
+    let q ← denoteQueryIn I ctx.toCore ts t
+    go vcs (p ∧ q)
+
+/--
+State semantic correctness of a program's verification conditions *under one
+interpretation* of its datatypes, rather than under all of them.
+
+This is deliberately weaker than `smtVCsCorrect`, and the two must not be
+conflated: a proof of this establishes the property in the intended model only.
+That is the right question for finding bugs -- a property that fails on the
+concrete datatype is a real defect, one that fails only in some exotic model is
+not -- and it is the only question that can be asked at all here, since
+`smtVCsCorrect` leaves every datatype sort abstract and so cannot decide a tag
+test on a symbolic value.
+
+`I` must interpret exactly the leading sorts and trailing functions of each
+generated context; otherwise every query denotes to `none` and this is `False`.
+-/
+def smtVCsCorrectIn (program : Program) (I : SuppliedInterp)
+    (options : MetaVerifier.Options := {}) : Prop :=
+  match genSMTVCs program options with
+  | some vcs => (denoteQueriesIn I vcs).getD False
+  | none     => False
+
 theorem toSMTVCs_cons :
     toSMTVCs ((E, ob) :: coreVCs) options = some vcs →
     ∃ label ctx ts t smtVCs, vcs = (label, ctx, ts, t) :: smtVCs ∧
@@ -384,6 +423,71 @@ def createGoal : SMTVC → MetaM MVarId := fun (label, ctx, ts, t) => do
     throwError e
   | .ok e =>
     trace[debug] "e := {e}"
+    Meta.check e
+    let .mvar mv ← Meta.mkFreshExprMVar e (userName := Translate.symbolToName label)
+      | throwError "Failed to create goal"
+    return mv
+
+/-- The Lean name a generated datatype declaration would carry.
+
+`DatatypeInductive` writes its declarations under `Strata.Gen`, quoting each
+Core name so it survives verbatim. Guillemets are quoting syntax rather than
+part of the name, so the components are used directly here. -/
+def genName (components : List String) : Name :=
+  components.foldl Name.str `Strata.Gen
+
+/-- Resolve a generated declaration, allowing for the namespace it was
+elaborated in. `DatatypeInductive.genPrefix` is relative, so a block emitted
+inside `namespace Strata` lands under `Strata.Strata.Gen`. -/
+def resolveGen (components : List String) : MetaM (Option Name) := do
+  let env ← getEnv
+  let base := genName components
+  for cand in [base, `Strata ++ base] do
+    if env.contains cand then return some cand
+  return none
+
+/-- The generated declaration a datatype function corresponds to.
+
+Recovered from the symbol's own shape, the same way `DatatypeEncoding` built it:
+`$dt.tag.D` is `D`'s tag, `D..f` is a selector, and anything else returning `D`
+is one of its constructors. -/
+def genComponentsOf (uf : UF) : Option (List String) :=
+  if uf.id.startsWith "$dt.tag." then
+    some [(uf.id.drop "$dt.tag.".length).toString, "tag"]
+  else match uf.id.splitOn ".." with
+    | [d, f] => some [d, f]
+    | _ => match uf.out with
+      | .constr d [] => some [d, uf.id]
+      | _ => none
+
+/-- Interpret a context's datatype symbols as the generated Lean declarations.
+
+Anything with no generated counterpart is left out, and `translateQueryIn` then
+quantifies over it as before. -/
+def genDatatypeInterp (ctx : Core.SMT.Context) :
+    MetaM (Std.HashMap Translate.Var (Lean.Expr × Lean.Expr)) := do
+  let mut m : Std.HashMap Translate.Var (Lean.Expr × Lean.Expr) := {}
+  for s in ctx.sorts.toList do
+    if let some c ← resolveGen [s.name] then
+      let ty := Lean.mkConst c
+      let ne := Lean.mkApp (Lean.mkConst ``Nonempty [levelOne]) ty
+      m := m.insert (.us s) (Lean.mkSort levelOne, ty)
+      m := m.insert (.is s) (ne, ← Lean.Meta.synthInstance ne)
+  for uf in ctx.ufs.toList do
+    if let some cs := genComponentsOf uf then
+      if let some c ← resolveGen cs then
+        m := m.insert (.uf uf) ((← getConstInfo c).type, Lean.mkConst c)
+  return m
+
+/-- `createGoal`, but with the datatype symbols interpreted rather than bound. -/
+def createGoalIn : SMTVC → MetaM MVarId := fun (label, ctx, ts, t) => do
+  let core := ctx.toCore
+  let interp ← genDatatypeInterp core
+  match _root_.translateQueryIn core interp ts t with
+  | .error e =>
+    logInfo m!"Error translating query under the generated interpretation"
+    throwError e
+  | .ok e =>
     Meta.check e
     let .mvar mv ← Meta.mkFreshExprMVar e (userName := Translate.symbolToName label)
       | throwError "Failed to create goal"
@@ -471,6 +575,37 @@ private unsafe def genSMTVCsUnsafe (mv : MVarId) : MetaM (List MVarId) := do
 @[implemented_by genSMTVCsUnsafe]
 meta opaque genSMTVCs (mv : MVarId) : MetaM (List MVarId)
 
+private unsafe def genSMTVCsInUnsafe (mv : MVarId) : MetaM (List MVarId) := do
+  let type ← mv.getType
+  let .const ``Strata.smtVCsCorrectIn _ := type.getAppFn
+    | throwError "Expected a Strata.smtVCsCorrectIn goal"
+  let #[program, _I, options] := type.getAppArgs
+    | throwError "Expected a Strata.smtVCsCorrectIn goal"
+  let mv ← Meta.unfoldTarget mv ``Strata.smtVCsCorrectIn
+  let ovcs := mkApp2 (.const ``Strata.genSMTVCs []) program options
+  let ovcsType := .app (.const ``Option [0]) (.const ``Strata.SMT.SMTVCs [])
+  let some evcs ← Meta.evalExpr (Option Strata.SMT.SMTVCs) ovcsType ovcs
+    | throwError "Failed to generate VCs"
+  let rhs := toExpr (some evcs)
+  let eqVCs := mkApp3 (.const ``Eq [1]) ovcsType ovcs rhs
+  let hEQVCs ← nativeDecide eqVCs
+  let r ← mv.rewrite (← mv.getType) hEQVCs
+  let mv ← mv.replaceTargetEq r.eNew r.eqProof
+  let mvs ← evcs.mapM SMT.createGoalIn
+  let ps ← mvs.mapM MVarId.getType
+  let hP := andNIntro (List.zip ps (mvs.map Expr.mvar))
+  let mvType ← mv.getType
+  let bridgeType := Lean.Expr.forallE `h (andN ps) mvType .default
+  let bridgeName ← Lean.mkAuxDeclName `_genSMTVCsIn_tcbBridge
+  Lean.addDecl (Declaration.axiomDecl {
+    name := bridgeName, levelParams := [], type := bridgeType, isUnsafe := false
+  })
+  mv.assign (mkApp (.const bridgeName []) hP)
+  return mvs
+
+@[implemented_by genSMTVCsInUnsafe]
+meta opaque genSMTVCsIn (mv : MVarId) : MetaM (List MVarId)
+
 end Meta
 
 end -- public section
@@ -490,6 +625,21 @@ open Lean Elab Tactic in
   match stx with
   | `(tactic| gen_smt_vcs) =>
     let mvs ← Meta.genSMTVCs (← Tactic.getMainGoal)
+    Tactic.replaceMainGoal mvs
+  | _ => throwUnsupportedSyntax
+
+/--
+Generate one Lean goal per SMT verification condition in a goal of the form
+`Strata.smtVCsCorrectIn program I`, with the datatype symbols interpreted as
+their generated Lean declarations rather than universally quantified.
+-/
+syntax (name := genSMTVCsIn) "gen_smt_vcs_in" : tactic
+
+open Lean Elab Tactic in
+@[tactic genSMTVCsIn] meta def evalGenSMTVCsIn : Tactic := fun stx => do
+  match stx with
+  | `(tactic| gen_smt_vcs_in) =>
+    let mvs ← Meta.genSMTVCsIn (← Tactic.getMainGoal)
     Tactic.replaceMainGoal mvs
   | _ => throwUnsupportedSyntax
 
