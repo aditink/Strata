@@ -124,12 +124,15 @@ partial def renderTy (known params : List String) : LMonoTy → Option String
   | .tcons "bool" [] => some "Prop"
   | .tcons "string" [] => some "String"
   | .bitvec n => some s!"(BitVec {n})"
-  -- A map denotes to a function; whether that is legal depends on where the
-  -- datatypes in it sit, which `mentionedNegatively` decides per group.
+  -- `SmtArray`, matching what `denoteSort` gives an `Array` sort. It wraps a
+  -- function but is a structure with a private field, so it is *not* defeq to
+  -- one: rendering the arrow directly makes the generated selector's type
+  -- disagree with the denotation. It still carries its index type negatively,
+  -- which `mentionedNegatively` decides per group.
   | .tcons "Map" [k, v] => do
     let k ← renderTy known params k
     let v ← renderTy known params v
-    return s!"({k} → {v})"
+    return s!"(_root_.SmtArray {k} {v})"
   | .tcons name [] =>
     if known.contains name then
       some (applied params (typeName name))

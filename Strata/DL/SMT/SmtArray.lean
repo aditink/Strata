@@ -46,6 +46,14 @@ variable {α : Type u} {β : Type v}
 def const (v : β) : SmtArray α β :=
   { toFun := fun _ => v }
 
+/-- An array of inhabited values is inhabited.
+
+`mk` and `toFun` are private, so a datatype carrying an `SmtArray` field cannot
+derive `Inhabited` without this -- which the generated model of a Core datatype
+needs, since its selectors are total and return `default` off their own
+constructor. -/
+instance [Inhabited β] : Inhabited (SmtArray α β) := ⟨const default⟩
+
 /-- Read the value stored at index `i` in array `a`. -/
 def select (a : SmtArray α β) (i : α) : β :=
   a.toFun i

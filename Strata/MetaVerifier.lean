@@ -21,6 +21,7 @@ import Strata.Languages.Core
 import Strata.Languages.Core.DDMTransform.Translate
 import Strata.Languages.Core.ProgramEval
 public import Strata.DL.SMT.DatatypeEncoding
+public import Strata.DL.SMT.DatatypeInductive
 public import Strata.DL.SMT.RealAbstraction
 
 -- For some reason shake wants to meta import the following
@@ -460,6 +461,75 @@ def genComponentsOf (uf : UF) : Option (List String) :=
       | .constr d [] => some [d, uf.id]
       | _ => none
 
+/-- The generated constant interpreting a sort, and how many parameters it takes.
+
+A generated block carrying a base type with no Lean image is parameterised over
+it, and `real` is the only such type the Laurel prelude produces, so every
+parameter is applied to the same opaque carrier. The count is read off the
+constant rather than recomputed, so it cannot drift from the generator.
+
+`none` for a sort with no generated counterpart, which then stays quantified. -/
+def sortCarrierName (s : Strata.DL.SMT.Sort) : MetaM (Option (Name × Nat)) := do
+  if s.name == SMT.RealAbstraction.realSortName then
+    return some (``Strata.SMT.DatatypeInductive.Real, 0)
+  let some c ← resolveGen [s.name] | return none
+  let mut ty ← Meta.inferType (Lean.mkConst c)
+  let mut params := 0
+  while ty.isForall do
+    params := params + 1
+    ty := ty.bindingBody!
+  return some (c, params)
+
+/-- A generated declaration with its block parameters instantiated, and its type.
+
+Generated blocks are parameterised over base types with no Lean image, and an
+inductive's parameters are *implicit* in its constructors, so the bare constant
+would leave them to unification -- which silently picks the wrong thing rather
+than failing. Every such parameter is applied to the same opaque carrier. -/
+def instantiateGenParams (c : Name) : MetaM (Lean.Expr × Lean.Expr) := do
+  let real := Lean.mkConst ``Strata.SMT.DatatypeInductive.Real
+  let mut e := Lean.mkConst c
+  let mut ty ← Meta.inferType e
+  -- Type parameters take the carrier; the `[Inhabited _]` binders that the
+  -- generated tag and selectors carry alongside them are synthesized. Stop at
+  -- the first binder that is neither, which is the operation's real argument.
+  -- Only *implicit* sort binders: a block parameter is implicit in the
+  -- operations, whereas a field is explicit -- and a field's type may itself be
+  -- a sort, since `bool` is modelled as `Prop`. The `[Inhabited _]` binders the
+  -- generated tag and selectors carry are synthesized. Stop at the first
+  -- explicit binder, which is the operation's own argument.
+  repeat
+    if !ty.isForall then break
+    if ty.bindingInfo!.isImplicit && ty.bindingDomain!.isSort then
+      e := Lean.mkApp e real
+      ty := ty.bindingBody!.instantiate1 real
+    else if ty.bindingInfo!.isInstImplicit then
+      let inst ← Meta.synthInstance ty.bindingDomain!
+      e := Lean.mkApp e inst
+      ty := ty.bindingBody!.instantiate1 inst
+    else break
+  return (ty, e)
+
+/-- The carrier interpreting a sort, as a term.
+
+Counted rather than routed through `instantiateGenParams`: every binder of a
+generated *type* constant is a block parameter and they are explicit, whereas in
+its operations they are implicit. -/
+def sortCarrierExpr (s : Strata.DL.SMT.Sort) : MetaM (Option Lean.Expr) := do
+  let some (c, params) ← sortCarrierName s | return none
+  let real := Lean.mkConst ``Strata.SMT.DatatypeInductive.Real
+  return some (Nat.rec (Lean.mkConst c) (fun _ e => Lean.mkApp e real) params)
+
+/-- The carrier interpreting a sort, as source text.
+
+`_root_`-anchored: the emitted text may be elaborated inside a namespace, and a
+relative name would resolve again against it. -/
+def sortCarrier (s : Strata.DL.SMT.Sort) : MetaM (Option String) := do
+  let some (c, params) ← sortCarrierName s | return none
+  if params == 0 then return some s!"_root_.{c}"
+  let args := String.join (List.replicate params " _root_.Strata.SMT.DatatypeInductive.Real")
+  return some s!"(_root_.{c}{args})"
+
 /-- Interpret a context's datatype symbols as the generated Lean declarations.
 
 Anything with no generated counterpart is left out, and `translateQueryIn` then
@@ -468,36 +538,19 @@ def genDatatypeInterp (ctx : Core.SMT.Context) :
     MetaM (Std.HashMap Translate.Var (Lean.Expr × Lean.Expr)) := do
   let mut m : Std.HashMap Translate.Var (Lean.Expr × Lean.Expr) := {}
   for s in ctx.sorts.toList do
-    if let some c ← resolveGen [s.name] then
-      let ty := Lean.mkConst c
+    -- Through `sortCarrierExpr`, so the parameters a generated block carries
+    -- are applied here exactly as the emitted interpretation applies them.
+    -- Building `mkConst` directly leaves a parameterised type unapplied, and
+    -- `Nonempty` then fails to synthesize for it.
+    if let some ty ← sortCarrierExpr s then
       let ne := Lean.mkApp (Lean.mkConst ``Nonempty [levelOne]) ty
       m := m.insert (.us s) (Lean.mkSort levelOne, ty)
       m := m.insert (.is s) (ne, ← Lean.Meta.synthInstance ne)
   for uf in ctx.ufs.toList do
     if let some cs := genComponentsOf uf then
       if let some c ← resolveGen cs then
-        m := m.insert (.uf uf) ((← getConstInfo c).type, Lean.mkConst c)
+        m := m.insert (.uf uf) (← instantiateGenParams c)
   return m
-
-/-- The carrier interpreting a sort, and the `Nonempty` witness for it.
-
-`none` for a sort with no generated counterpart, which then stays quantified. -/
-def sortCarrier (s : Strata.DL.SMT.Sort) : MetaM (Option String) := do
-  if s.name == SMT.RealAbstraction.realSortName then
-    return some "_root_.Strata.SMT.DatatypeInductive.Real"
-  let some c ← resolveGen [s.name] | return none
-  -- A generated block carrying a base type with no Lean image is parameterised
-  -- over it; `real` is the only such type the Laurel prelude produces, so every
-  -- parameter is applied to the same opaque carrier. The arity is read off the
-  -- constant rather than recomputed, so this cannot drift from the generator.
-  let mut ty ← Meta.inferType (Lean.mkConst c)
-  let mut args := ""
-  while ty.isForall do
-    args := args ++ " _root_.Strata.SMT.DatatypeInductive.Real"
-    ty := ty.bindingBody!
-  -- `_root_`-anchored: the emitted text may be elaborated inside a namespace,
-  -- and a relative name would resolve again against it.
-  return some (if args.isEmpty then s!"_root_.{c}" else s!"(_root_.{c}{args})")
 
 /-- Whether a function has a generated counterpart we can supply. -/
 def ufResolvable (uf : UF) : MetaM Bool := do
