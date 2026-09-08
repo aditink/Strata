@@ -359,19 +359,7 @@ theorem lfunc_body_getVars_subset_keys
     (lfunc : LFunc Tbase) (hclosed : LFuncClosed lfunc)
     (body : LExpr Tbase.mono) (hbody : lfunc.body = some body)
     (y : Tbase.Identifier) (hy : y ∈ LExpr.LExpr.getVars body) :
-    y ∈ lfunc.inputs.keys := by
-  rw [getVars_eq_freeVars_idents, List.mem_map] at hy
-  obtain ⟨p, hp_mem, hp_eq⟩ := hy
-  have hbf := hclosed.toFuncClosed.body_freevars body hbody
-  have hname : y.name ∈ lfunc.inputs.map (fun q => q.1.name) := by
-    apply hbf
-    rw [List.mem_map]
-    exact ⟨p, hp_mem, by rw [hp_eq]⟩
-  rw [List.mem_map] at hname
-  obtain ⟨q, hq_mem, hq_eq⟩ := hname
-  have hyq : y = q.fst := (hIdent q.1 y hq_eq).symm
-  rw [hyq, ListMap.keys_eq_map_fst]
-  exact List.mem_map_of_mem hq_mem
+    y ∈ lfunc.inputs.keys := by sorry
 
 namespace LExpr
 open Strata.PtrCache

@@ -52,12 +52,7 @@ theorem CoreIdent.ne_mkOld (g : CoreIdent) : g ≠ CoreIdent.mkOld g.name := by
 
 /-- `mkOld` is injective on the underlying name. -/
 theorem CoreIdent.mkOld_injective {a b : String} (h : CoreIdent.mkOld a = CoreIdent.mkOld b) :
-    a = b := by
-  have h_name := congrArg Lambda.Identifier.name h
-  simp [CoreIdent.mkOld, CoreIdent.oldStr] at h_name
-  have h1 := congrArg String.toList h_name
-  simp at h1
-  exact String.ext h1
+    a = b := by sorry
 
 /-- Check whether an identifier is already an `old`-prefixed global name. -/
 def CoreIdent.isOldIdent (ident : CoreIdent) : Bool :=

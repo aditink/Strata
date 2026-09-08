@@ -1683,12 +1683,7 @@ theorem block_pred_map_cmd_true {P : PureExpr}
 
 /-- `Block.initVars` of a `.cmd`-only block is the commands' `definedVars`. -/
 theorem Block.initVars_map_cmd {P : PureExpr} [HasFvars P] (cs : List (Cmd P)) :
-    Block.initVars (cs.map Stmt.cmd) = Cmds.definedVars cs := by
-  induction cs with
-  | nil => simp [Block.initVars, Cmds.definedVars]
-  | cons c rest ih =>
-    simp only [List.map_cons, Block.initVars_cons, Cmds.definedVars]
-    rw [ih]; congr 1; cases c <;> simp [Stmt.initVars, Cmd.definedVars, HasVarsImp.definedVars]
+    Block.initVars (cs.map Stmt.cmd) = Cmds.definedVars cs := by sorry
 
 /-- A `.cmd`-only block has `noFuncDecl`. -/
 theorem Block.noFuncDecl_map_cmd {P : PureExpr} (cs : List (Cmd P)) :

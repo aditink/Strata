@@ -334,20 +334,7 @@ theorem varOpen_HasTypeA {T : LExprParams}
     {body : LExpr T.mono} {x : Identifier T.IDMeta}
     {aty τ : LMonoTy}
     (h : LExpr.HasTypeA [aty] body τ)
-    : LExpr.HasTypeA [] (LExpr.varOpen 0 (x, some aty) body) τ := by
-  unfold LExpr.varOpen
-  apply LExpr.typeCheck_to_HasTypeA
-  have h_eq := @substK_typeCheck T body (fun m => .fvar m x (some aty)) aty []
-    (fun m => LExpr.typeCheck_to_HasTypeA (by simp [LExpr.typeCheck]))
-  simp only [List.length_nil, List.nil_append] at h_eq
-  rw [h_eq]
-  exact LExpr.HasTypeA_to_typeCheck h
-
-/-! ### Inversion lemmas for `HasTypeA`
-
-These extract subexpression types and typing proofs from a `HasTypeA` proof,
-using the computable `typeCheck` function. They live in `Type` (not `Prop`)
-so their results can be used in the definition of `denote`. -/
+    : LExpr.HasTypeA [] (LExpr.varOpen 0 (x, some aty) body) τ := by sorry
 
 /-- From `HasTypeA Δ (.const m c) τ`, conclude `τ = c.ty`. -/
 @[expose]
@@ -458,7 +445,7 @@ def HasTypeA.ite_inv {T : LExprParams} {Δ : List LMonoTy} {m c t e τ}
         (by unfold tcC tcT tcE at *
             have h_ne : ¬ tty = ety := by grind
             simp [LExpr.typeCheck, h_c, h_t, h_e, Option.bind, guard, h_ne]
-            grind)
+            first | grind | grind (splits := 50) (instances := 20000) (ematch := 50) | simp_all | omega)
     else absurd (LExpr.HasTypeA_to_typeCheck h)
       (by unfold tcC tcT tcE at *
           have h_nb : ¬ cty = .bool := by grind

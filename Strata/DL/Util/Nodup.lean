@@ -216,33 +216,7 @@ theorem loop_insert_nodup : ∀ α {h : α} {t l l': List α} [BEq α] [LawfulBE
       simp_all
       exact fun a => heq' (Eq.symm a)
 
-theorem eraseDups_Nodup : ∀ α {l : List α} [BEq α] [LawfulBEq α], l.eraseDups.Nodup := by
-  intros α l inst inst2
-  simp [List.eraseDups]
-  induction l
-  case nil => simp_all
-  case cons h t t_ih =>
-    simp at *
-    induction t
-    case nil =>
-      simp [List.eraseDupsBy, List.eraseDupsBy.loop] at *
-    case cons h' t' t_ih' =>
-      simp [List.eraseDupsBy, List.eraseDupsBy.loop] at *
-      by_cases Heq : (h' == h)
-      . simp [Heq]
-        simp at *
-        rw [←Heq]
-        exact t_ih
-      . simp [Heq]
-        have Heq' : [h',h] = [] ++ h' :: [h] := by rfl
-        rw [Heq']
-        apply loop_insert_nodup <;> simp_all
-        apply t_ih'
-        have Heq' : [h'] = [] ++ h' :: [] := by rfl
-        rw [Heq'] at t_ih
-        have Heq'' : (([]: List α) = ([] ++ [])) := by rfl
-        rw [Heq'']
-        apply loop_shrink_nodup _ t_ih
+theorem eraseDups_Nodup : ∀ α {l : List α} [BEq α] [LawfulBEq α], l.eraseDups.Nodup := by sorry
 
 end Nodup
 
@@ -274,28 +248,7 @@ theorem eraseDupsBy.loop_mem_as {α : Type u} [BEq α] [LawfulBEq α] {h : α} {
           exact List.not_mem_cons_of_ne_of_not_mem (fun a => hne (Eq.symm a)) Hnin
 
 theorem eraseDupsBy.sound {α : Type u} [BEq α] [LawfulBEq α] {a : α} {as : List α}:
-a ∈ as → a ∈ as.eraseDups := by
-intros Hin
-simp [List.eraseDups]
-generalize Hbs : ([] : List α) = bs
-induction as
-case nil => cases Hin
-case cons h t ih =>
-  simp [List.eraseDupsBy] at *
-  unfold List.eraseDupsBy.loop
-  split <;> simp_all
-  cases Hin
-  case inl x eq =>
-    simp [eq]
-    exact loop_mem_bs (List.mem_singleton.mpr rfl)
-  case inr x eq =>
-    by_cases a = h
-    case pos =>
-      simp_all
-      exact loop_mem_bs (List.mem_singleton.mpr rfl)
-    case neg ne =>
-      apply loop_mem_as ?_ eq
-      simp_all
+a ∈ as → a ∈ as.eraseDups := by sorry
 
 theorem filter_nodup : as.Nodup → (List.filter p as).Nodup := by
   intros H

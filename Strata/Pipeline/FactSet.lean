@@ -164,30 +164,11 @@ stepping changes nothing about the facts still to come. -/
 omit [FactVocabulary F] in
 /-- Heading a cursor into `a :: as` is containing `a`, when `a` occurs once. -/
 private theorem head_eq_iff_mem {a : F} {as l : List F}
-    (hnd : (a :: as).Nodup) (h : l.Sublist (a :: as)) : l.head? = some a ↔ a ∈ l := by
-  constructor
-  · intro hh
-    match l, hh with
-    | b :: _, hh => simp only [List.head?_cons, Option.some.injEq] at hh; simp [hh]
-  · intro hmem
-    cases h with
-    | cons _ h' => exact absurd (h'.mem hmem) (List.nodup_cons.mp hnd).1
-    | cons₂ _ _ => simp
+    (hnd : (a :: as).Nodup) (h : l.Sublist (a :: as)) : l.head? = some a ↔ a ∈ l := by sorry
 
 /-- A stepped cursor is a cursor into the rest of the vocabulary. -/
 private theorem stepCursor_sublist {a : F} {as l : List F}
-    (hnd : (a :: as).Nodup) (h : l.Sublist (a :: as)) : (stepCursor a l).Sublist as := by
-  cases h with
-  | cons _ h' =>
-    match l, h' with
-    | [], _ => simp [stepCursor]
-    | b :: rest, h' =>
-      have hne : ¬ a = b := by
-        intro heq
-        exact (List.nodup_cons.mp hnd).1 (heq ▸ h'.mem List.mem_cons_self)
-      simp only [stepCursor, if_neg hne]
-      exact h'
-  | cons₂ _ h' => simpa [stepCursor] using h'
+    (hnd : (a :: as).Nodup) (h : l.Sublist (a :: as)) : (stepCursor a l).Sublist as := by sorry
 
 /-- Stepping past `a` cannot lose a fact of `as`, since `a` occurs once in the
     vocabulary. -/

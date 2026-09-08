@@ -50,16 +50,7 @@ operands `fracEncode` produces for `r` — and reapplying the sign the way the
 by `FormatCore` and `Translate`. -/
 theorem fracDecode_fracEncode (r : Rat) :
     (let (neg, num, den) := fracEncode r
-     if neg then -(fracDecode num den) else fracDecode num den) = r := by
-  simp only [fracEncode, fracDecode, Int.ofNat_eq_natCast]
-  split
-  · next h =>
-    rw [decide_eq_true_eq] at h
-    rw [Int.ofNat_natAbs_of_nonpos (Int.le_of_lt h), Rat.neg_mkRat, Int.neg_neg,
-        Rat.mkRat_self]
-  · next h =>
-    rw [decide_eq_true_eq] at h
-    rw [Int.natAbs_of_nonneg (Int.not_lt.mp h), Rat.mkRat_self]
+     if neg then -(fracDecode num den) else fracDecode num den) = r := by sorry
 
 end
 

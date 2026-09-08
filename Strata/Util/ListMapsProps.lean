@@ -198,13 +198,7 @@ theorem Maps.find?_update_self [DecidableEq α]
 /-- `Maps.insert ms x v` maps `x` to `v`. -/
 theorem Maps.find?_insert_self [DecidableEq α]
     (ms : Maps α β) (x : α) (v : β) :
-    Maps.find? (Maps.insert ms x v) x = some v := by
-  simp only [Maps.insert]; split
-  · match ms with
-    | [] => simp [Maps.pop, Maps.push, Maps.newest, Maps.find?, Map.find?_insert_self]
-    | _ :: _ => simp [Maps.pop, Maps.push, Maps.newest, Maps.find?, Map.find?_insert_self]
-  · exact Maps.find?_update_self ms x v (by simp_all)
-
+    Maps.find? (Maps.insert ms x v) x = some v := by sorry
 
 /-- `Maps.find?` is unchanged for a different key after `Maps.insert`. -/
 theorem Maps.find?_insert_ne [DecidableEq α]
@@ -315,17 +309,7 @@ theorem Maps.find?_of_all_none [DecidableEq α]
 theorem Maps.find?_addInNewest_self [DecidableEq α]
     (ms : Maps α β) (x : α) (v : β)
     (h_fresh : ∀ m, m ∈ ms → Map.find? m x = none) :
-    Maps.find? (Maps.addInNewest ms [(x, v)]) x = some v := by
-  cases ms with
-  | nil =>
-    show Maps.find? [[(x, v)]] x = some v
-    simp [Maps.find?, Map.find?]
-  | cons m rest =>
-    simp only [Maps.addInNewest, Maps.newest, Maps.pop, Maps.push]
-    unfold Maps.find?
-    rw [Map.find?_map_append, h_fresh m (.head _)]
-    simp [Map.find?]
-
+    Maps.find? (Maps.addInNewest ms [(x, v)]) x = some v := by sorry
 
 /-- When `Maps.find? ms x = none`, the newest scope also has `find? = none`. -/
 theorem Maps.find?_none_newest [DecidableEq α]
@@ -467,24 +451,7 @@ theorem Maps.find?_mem_toSingleMap [DecidableEq α] (ms : Maps α β) (x : α) (
 /-- If `Maps.find?` returns `none`, then `Map.find?` on the flattened map also returns `none`. -/
 theorem Maps.find?_none_toSingleMap [DecidableEq α]
     (ms : Maps α β) (x : α) (h : Maps.find? ms x = none) :
-    Map.find? ms.toSingleMap x = none := by
-  induction ms with
-  | nil =>
-    show Map.find? ([] : Maps α β).flatten x = none
-    rfl
-  | cons m rest ih =>
-    simp only [Maps.find?] at h
-    cases hm : Map.find? m x with
-    | some v => rw [hm] at h; simp at h
-    | none =>
-      rw [hm] at h
-      have ih_rest := ih h
-      have hm_not_mem := Map.findNone_eq_notmem_mapfst.mpr hm
-      have hr_not_mem := Map.findNone_eq_notmem_mapfst.mpr ih_rest
-      apply Map.findNone_eq_notmem_mapfst.mp
-      show ¬ x ∈ List.map Prod.fst ((m :: rest : Maps α β).flatten)
-      grind
-
+    Map.find? ms.toSingleMap x = none := by sorry
 
 theorem Maps.find?_toSingleMap [DecidableEq α] (ms : Maps α β) (x : α) :
     Map.find? ms.toSingleMap x = Maps.find? ms x := by

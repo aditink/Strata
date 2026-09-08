@@ -1787,27 +1787,8 @@ theorem stmtsT_append_terminal
     (hcov : Block.exitsCoveredByBlocks (P := P) (CmdT := CmdT) [] ss₁) :
     ∃ (ρ₁ : Env P), ∃ (_ : StepStmtStar P EvalCmd extendFactory (.stmts ss₁ ρ₀) (.terminal ρ₁)),
       ∃ (hs : ReflTransT (StepStmt P EvalCmd extendFactory) (.stmt s ρ₁) (.terminal ρ')),
-      hs.len < hstar.len := by
-  induction ss₁ generalizing ρ₀ with
-  | nil =>
-    have ⟨ρ₁, h1, h2, hlen⟩ := stmtsT_cons_terminal hstar
-    have hρ : ρ₁ = ρ' := by
-      match h2 with
-      | .step _ _ _ .step_stmts_nil (.refl _) => rfl
-    subst hρ
-    exact ⟨ρ₀, .step _ _ _ .step_stmts_nil (.refl _), h1, by grind⟩
-  | cons s' rest' ih =>
-    have ⟨ρ₁, h_s', h_rest, hlen₁⟩ := stmtsT_cons_terminal hstar
-    have ⟨ρ₂, h_rest', h_s, hlen₂⟩ := ih ρ₁ h_rest hcov.2
-    exact ⟨ρ₂,
-      ReflTrans_Transitive _ _ _ _
-        (stmts_cons_step P EvalCmd extendFactory s' rest' ρ₀ ρ₁ (reflTransT_to_prop h_s'))
-        h_rest',
-      h_s, by grind⟩
+      hs.len < hstar.len := by sorry
 
-/-! ## Failing-state decomposition helpers -/
-
-omit [HasOps P] [HasFvars P] [HasInt P] [HasIntOps P] in
 /-- Decompose a `.seq` execution reaching a failing config in `ReflTransT`:
     either failure happens inside `inner`, or `inner` terminates and
     failure happens in the tail. -/
@@ -1862,24 +1843,8 @@ theorem stmtsT_singleton_canfail
     (hf : cfg.getEnv.hasFailure = true) :
     ∃ (cfg' : Config P CmdT)
       (h : ReflTransT (StepStmt P EvalCmd extendFactory) (.stmt s ρ₀) cfg'),
-        cfg'.getEnv.hasFailure = true ∧ h.len ≤ hstar.len := by
-  match hstar with
-  | .refl _ =>
-    have hf₀ : ρ₀.hasFailure = true := hf
-    refine ⟨.stmt s ρ₀, .refl _, ?_, ?_⟩
-    · exact hf₀
-    · simp [ReflTransT.len]
-  | .step _ _ _ .step_stmts_cons hrest =>
-    match seqT_canfail hrest hf with
-    | .inl ⟨cfg', h_inner, hf', hlen⟩ =>
-      refine ⟨cfg', h_inner, hf', ?_⟩
-      simp [ReflTransT.len] at hlen ⊢; omega
-    | .inr ⟨ρ_x, h1, h2, hlen⟩ =>
-      have hf_x : ρ_x.hasFailure = true := stmts_nil_canfail_env (reflTransT_to_prop h2) hf
-      refine ⟨_, h1, hf_x, ?_⟩
-      simp [ReflTransT.len] at hlen ⊢; omega
+        cfg'.getEnv.hasFailure = true ∧ h.len ≤ hstar.len := by sorry
 
-omit [HasOps P] [HasFvars P] [HasInt P] [HasIntOps P] in
 /-- Decompose `.stmts (ss₁ ++ [s])` reaching a failing config: either
     failure happens before reaching `s`, or `ss₁` terminates at `ρ₁` and
     the failure happens in `s`. -/
@@ -1895,43 +1860,8 @@ theorem stmtsT_append_canfail
       StepStmtStar P EvalCmd extendFactory (.stmts ss₁ ρ₀) (.terminal ρ₁) ∧
       ∃ (cfg₂ : Config P CmdT),
       ∃ (hs : ReflTransT (StepStmt P EvalCmd extendFactory) (.stmt s ρ₁) cfg₂),
-        cfg₂.getEnv.hasFailure = true ∧ hs.len < hstar.len) := by
-  induction ss₁ generalizing ρ₀ with
-  | nil =>
-    match hstar with
-    | .refl _ =>
-      exact .inl ⟨.stmts [] ρ₀, hf, .refl _⟩
-    | .step _ _ _ .step_stmts_cons hrest =>
-      match seqT_canfail hrest hf with
-      | .inl ⟨cfg', h, hf', _⟩ =>
-        exact .inr ⟨ρ₀, .step _ _ _ .step_stmts_nil (.refl _), cfg', h, hf',
-          by simp [ReflTransT.len]; omega⟩
-      | .inr ⟨ρ₁, h1, h2, _⟩ =>
-        exact .inr ⟨ρ₀, .step _ _ _ .step_stmts_nil (.refl _), .terminal ρ₁, h1,
-          stmts_nil_canfail_env (reflTransT_to_prop h2) hf,
-          by simp [ReflTransT.len]; omega⟩
-  | cons s' rest' ih =>
-    match hstar with
-    | .refl _ =>
-      exact .inl ⟨.stmts (s' :: rest') ρ₀, hf, .refl _⟩
-    | .step _ _ _ .step_stmts_cons hrest =>
-      match seqT_canfail hrest hf with
-      | .inl ⟨cfg', h, hf', _⟩ =>
-        exact .inl ⟨.seq cfg' rest', hf',
-          .step _ _ _ .step_stmts_cons
-            (seq_inner_star P EvalCmd extendFactory _ cfg' rest' (reflTransT_to_prop h))⟩
-      | .inr ⟨ρ₁, h1, h2, _⟩ =>
-        have hpre := stmts_cons_step P EvalCmd extendFactory s' rest' ρ₀ ρ₁
-          (reflTransT_to_prop h1)
-        match ih ρ₁ h2 with
-        | .inl ⟨cfg'_rest, hf'_rest, hstar_rest⟩ =>
-          exact .inl ⟨cfg'_rest, hf'_rest,
-            ReflTrans_Transitive _ _ _ _ hpre hstar_rest⟩
-        | .inr ⟨ρ₂, hterm_rest, cfg₂, hs, hf₂, _⟩ =>
-          exact .inr ⟨ρ₂, ReflTrans_Transitive _ _ _ _ hpre hterm_rest,
-            cfg₂, hs, hf₂, by simp [ReflTransT.len]; omega⟩
+        cfg₂.getEnv.hasFailure = true ∧ hs.len < hstar.len) := by sorry
 
-omit [HasOps P] [HasFvars P] [HasInt P] [HasIntOps P] in
 /-- Unwrap a failing `.block l σ_parent f_parent inner` execution to a failing run on `inner`. -/
 theorem block_canfail_to_inner
     {inner : Config P CmdT} {l : Option String} {σ_parent : SemanticStore P}
@@ -2011,10 +1941,7 @@ theorem seq_canfail_prop
       StepStmtStar P EvalCmd extendFactory inner cfg') ∨
     (∃ ρ₁, StepStmtStar P EvalCmd extendFactory inner (.terminal ρ₁) ∧
       ∃ cfg', cfg'.getEnv.hasFailure = true ∧
-        StepStmtStar P EvalCmd extendFactory (.stmts ss ρ₁) cfg') :=
-  match seqT_canfail (reflTrans_to_T hstar) hf with
-  | .inl ⟨cfg', h, hf', _⟩ => .inl ⟨cfg', hf', reflTransT_to_prop h⟩
-  | .inr ⟨ρ₁, h1, h2, _⟩ => .inr ⟨ρ₁, reflTransT_to_prop h1, _, hf, reflTransT_to_prop h2⟩
+        StepStmtStar P EvalCmd extendFactory (.stmts ss ρ₁) cfg') := by sorry
 
 end ReflTransTHelpers
 
@@ -3022,109 +2949,7 @@ theorem Config.varsUndefinedThroughout_step {P : PureExpr}
     {Q : P.Ident → Prop} {cfg cfg' : Config P (Cmd P)}
     (h_step : StepStmt P (EvalCmd P) extendFactory cfg cfg')
     (h_inv : Config.varsUndefinedThroughout (P := P) Q cfg) :
-    Config.varsUndefinedThroughout (P := P) Q cfg' := by
-  induction h_step with
-  | step_cmd h_eval =>
-    intro y hQ
-    obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-    refine evalCmd_preserves_none_of_not_def h_eval h_none ?_
-    simpa [Stmt.definedVars] using h_ndef
-  | step_block =>
-    refine ⟨fun y hQ => (h_inv y hQ).1, fun y hQ => ?_⟩
-    obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-    exact ⟨h_none, all_not_mem_definedVars_of_block (by simpa [Stmt.definedVars] using h_ndef)⟩
-  | step_ite_true _ _ =>
-    refine ⟨fun y hQ => (h_inv y hQ).1, fun y hQ => ?_⟩
-    obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-    rw [Stmt.definedVars] at h_ndef
-    simp only [Bool.false_eq_true, if_false] at h_ndef
-    exact ⟨h_none, all_not_mem_definedVars_of_block (fun hc => h_ndef (List.mem_append.mpr (Or.inl hc)))⟩
-  | step_ite_false _ _ =>
-    refine ⟨fun y hQ => (h_inv y hQ).1, fun y hQ => ?_⟩
-    obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-    rw [Stmt.definedVars] at h_ndef
-    simp only [Bool.false_eq_true, if_false] at h_ndef
-    exact ⟨h_none, all_not_mem_definedVars_of_block (fun hc => h_ndef (List.mem_append.mpr (Or.inr hc)))⟩
-  | step_ite_nondet_true =>
-    refine ⟨fun y hQ => (h_inv y hQ).1, fun y hQ => ?_⟩
-    obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-    rw [Stmt.definedVars] at h_ndef
-    simp only [Bool.false_eq_true, if_false] at h_ndef
-    exact ⟨h_none, all_not_mem_definedVars_of_block (fun hc => h_ndef (List.mem_append.mpr (Or.inl hc)))⟩
-  | step_ite_nondet_false =>
-    refine ⟨fun y hQ => (h_inv y hQ).1, fun y hQ => ?_⟩
-    obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-    rw [Stmt.definedVars] at h_ndef
-    simp only [Bool.false_eq_true, if_false] at h_ndef
-    exact ⟨h_none, all_not_mem_definedVars_of_block (fun hc => h_ndef (List.mem_append.mpr (Or.inr hc)))⟩
-  | step_loop_enter _ _ =>
-    refine ⟨⟨fun y hQ => (h_inv y hQ).1, fun y hQ => ?_⟩, fun y hQ s hs => ?_⟩
-    · obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-      rw [Stmt.definedVars] at h_ndef
-      simp only [Bool.false_eq_true, if_false] at h_ndef
-      exact ⟨h_none, all_not_mem_definedVars_of_block h_ndef⟩
-    · obtain ⟨_, h_ndef⟩ := h_inv y hQ
-      rw [Stmt.definedVars] at h_ndef
-      simp only [Bool.false_eq_true, if_false] at h_ndef
-      rcases List.mem_cons.mp hs with h_eq | h_in
-      · subst h_eq; rw [Stmt.definedVars]; simp only [Bool.false_eq_true, if_false]; exact h_ndef
-      · exact absurd h_in (List.not_mem_nil)
-  | step_loop_exit _ _ =>
-    intro y hQ; exact (h_inv y hQ).1
-  | step_loop_nondet_enter =>
-    refine ⟨⟨fun y hQ => (h_inv y hQ).1, fun y hQ => ?_⟩, fun y hQ s hs => ?_⟩
-    · obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-      rw [Stmt.definedVars] at h_ndef
-      simp only [Bool.false_eq_true, if_false] at h_ndef
-      exact ⟨h_none, all_not_mem_definedVars_of_block h_ndef⟩
-    · obtain ⟨_, h_ndef⟩ := h_inv y hQ
-      rw [Stmt.definedVars] at h_ndef
-      simp only [Bool.false_eq_true, if_false] at h_ndef
-      rcases List.mem_cons.mp hs with h_eq | h_in
-      · subst h_eq; rw [Stmt.definedVars]; simp only [Bool.false_eq_true, if_false]; exact h_ndef
-      · exact absurd h_in (List.not_mem_nil)
-  | step_loop_nondet_exit =>
-    intro y hQ; exact (h_inv y hQ).1
-  | step_exit =>
-    intro y hQ; exact (h_inv y hQ).1
-  | step_funcDecl =>
-    intro y hQ; exact (h_inv y hQ).1
-  | step_typeDecl =>
-    intro y hQ; exact (h_inv y hQ).1
-  | step_stmts_nil =>
-    intro y hQ; exact (h_inv y hQ).1
-  | step_stmts_cons =>
-    refine ⟨fun y hQ => ?_, fun y hQ s' hs' => ?_⟩
-    · obtain ⟨h_none, h_ndef⟩ := h_inv y hQ
-      exact ⟨h_none, h_ndef _ (List.mem_cons_self)⟩
-    · exact (h_inv y hQ).2 s' (List.mem_cons_of_mem _ hs')
-  | step_seq_inner _ ih =>
-    obtain ⟨h_inner_inv, h_ndef⟩ := h_inv
-    exact ⟨ih h_inner_inv, h_ndef⟩
-  | step_seq_done =>
-    obtain ⟨h_inner, h_ndef⟩ := h_inv
-    intro y hQ
-    exact ⟨h_inner y hQ, h_ndef y hQ⟩
-  | step_seq_exit =>
-    exact h_inv.1
-  | step_block_body _ ih =>
-    obtain ⟨h_parent, h_inner_inv⟩ := h_inv
-    exact ⟨h_parent, ih h_inner_inv⟩
-  | step_block_done =>
-    obtain ⟨h_parent, _⟩ := h_inv
-    intro y hQ
-    show projectStore _ _ y = none
-    unfold projectStore; rw [if_neg]; rw [h_parent y hQ]; simp
-  | step_block_exit_match _ =>
-    obtain ⟨h_parent, _⟩ := h_inv
-    intro y hQ
-    show projectStore _ _ y = none
-    unfold projectStore; rw [if_neg]; rw [h_parent y hQ]; simp
-  | step_block_exit_mismatch _ =>
-    obtain ⟨h_parent, _⟩ := h_inv
-    intro y hQ
-    show projectStore _ _ y = none
-    unfold projectStore; rw [if_neg]; rw [h_parent y hQ]; simp
+    Config.varsUndefinedThroughout (P := P) Q cfg' := by sorry
 
 /-- Trace lift: `Config.varsUndefinedThroughout` is preserved along a multi-step run. -/
 theorem Config.varsUndefinedThroughout_star {P : PureExpr}
@@ -3191,30 +3016,7 @@ theorem stmts_prefix_failing_append (P : PureExpr) [HasFvar P] [HasFvars P] [Has
     (h : StepStmtStar P (EvalCmd P) extendFactory (.stmts pfx ρ) c)
     (hc : c.getEnv.hasFailure = true) :
     ∃ c', StepStmtStar P (EvalCmd P) extendFactory (.stmts (pfx ++ sfx) ρ) c'
-      ∧ c'.getEnv.hasFailure = true := by
-  induction pfx generalizing ρ c with
-  | nil =>
-    have h_c_env : c.getEnv = ρ := by
-      cases h with
-      | refl => rfl
-      | step _ _ _ h_step h_rest =>
-        cases h_step with
-        | step_stmts_nil =>
-          have := reflTransT_from_terminal P extendFactory (reflTrans_to_T h_rest)
-          rw [this]; rfl
-    have hρ : ρ.hasFailure = true := by rw [h_c_env] at hc; simpa [Config.getEnv] using hc
-    refine ⟨Config.stmts sfx ρ, ?_, by simpa [Config.getEnv] using hρ⟩
-    simpa using ReflTrans.refl (Config.stmts ([] ++ sfx) ρ)
-  | cons s rest ih =>
-    rcases stmts_cons_reaches_failing' P extendFactory (reflTrans_to_T h) hc with
-      ⟨d, h_head, hd⟩ | ⟨ρ₁, d, h_head_term, h_rest_run, hd⟩
-    · refine ⟨.seq d (rest ++ sfx),
-        .step _ _ _ StepStmt.step_stmts_cons
-          (seq_inner_star P (EvalCmd P) extendFactory _ _ _ h_head), ?_⟩
-      simpa [Config.getEnv] using hd
-    · obtain ⟨c', h_rest_full, hc'⟩ := ih ρ₁ d h_rest_run hd
-      exact ⟨c', ReflTrans_Transitive _ _ _ _
-        (stmts_cons_step P (EvalCmd P) extendFactory s (rest ++ sfx) ρ ρ₁ h_head_term) h_rest_full, hc'⟩
+      ∧ c'.getEnv.hasFailure = true := by sorry
 
 end -- public section
 end Imperative

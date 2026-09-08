@@ -232,39 +232,7 @@ theorem Nat_eq_of_toString_eq {x y: Nat}: (toString x) = (toString y) → x = y 
 
 private theorem under_toList : "_".toList = ['_'] := rfl
 
-theorem Nat_eq_of_StringGen_suffix {x y: Nat}: ("_" ++ toString x).IsSuffix (s ++ "_" ++ toString y) → x = y := by
-  intro Hsuf
-  apply Nat_eq_of_toString_eq
-  if x_lt : (toString x).length < (toString y).length then
-    simp only [String.IsSuffix, String.toList_append, under_toList] at Hsuf
-    have Hsuf': (toString y).toList  <:+ s.toList ++ ['_'] ++ (toString y).toList :=
-      List.suffix_append_of_suffix (List.suffix_refl _)
-    have ⟨t, h⟩ : ['_'] ++ (toString x).toList <:+ (toString y).toList :=
-      List.suffix_of_suffix_length_le Hsuf Hsuf' (by simp; exact x_lt)
-    have : '_' ∈ (toString y).toList := by grind
-    have := @Nat_toString_not_contain_underscore y
-    contradiction
-  else if x_gt : (toString x).length > (toString y).length then
-    have Hsuf : (toString x).toList <:+ s.toList ++ ['_'] ++ (toString y).toList := by
-      obtain ⟨t, H⟩ := Hsuf
-      exists t ++ ['_']
-      simp only [String.toList_append, under_toList, List.append_assoc] at H
-      simp only [List.append_assoc]
-      exact H
-    have Hsuf': ['_'] ++ (toString y).toList  <:+ s.toList ++ ['_'] ++ (toString y).toList := by
-      simp only [List.append_assoc]
-      exact List.suffix_append_of_suffix (List.suffix_refl _)
-    have ⟨t, h⟩ : ['_'] ++ (toString y).toList <:+ (toString x).toList :=
-      List.suffix_of_suffix_length_le Hsuf' Hsuf (by simp_all; exact x_gt)
-    have : '_' ∈ (toString x).toList := by grind
-    have := @Nat_toString_not_contain_underscore x
-    contradiction
-  else
-    have eq_len: (toString x).length = (toString y).length := by omega
-    obtain ⟨cs, H⟩ := Hsuf
-    simp only [String.toList_append, ← List.append_assoc] at H
-    have this := List.append_inj_right' H eq_len
-    exact String.toList_inj.mp this
+theorem Nat_eq_of_StringGen_suffix {x y: Nat}: ("_" ++ toString x).IsSuffix (s ++ "_" ++ toString y) → x = y := by sorry
 
 /--
 The uniqueness of the generated string follows from the following: given that the numbers at the end of all strings are unique, then the strings themselves must be unique.

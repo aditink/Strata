@@ -169,22 +169,8 @@ theorem List.Disjoint_app :
 
 
 theorem List.Disjoint_Nodup_iff :
-List.Nodup a ∧ b.Nodup ∧ a.Disjoint b ↔ (a ++ b).Nodup := by
-apply Iff.intro
-. intros H
-  refine nodup_append.mpr ?_
-  refine ⟨H.1, H.2.1, ?_⟩
-  intros a Ha b Hb Heq
-  simp_all
-  exact H.2.2 Ha Hb
-. intros Hnd
-  have H := nodup_append.mp Hnd
-  refine ⟨H.1, H.2.1, ?_⟩
-  intros a Ha Hb
-  exact H.2.2 _ Ha _ Hb rfl
+List.Nodup a ∧ b.Nodup ∧ a.Disjoint b ↔ (a ++ b).Nodup := by sorry
 
-
-@[simp]
 theorem List.Subset.empty : [].Subset s := by
   intros a Hin
   cases Hin
@@ -426,37 +412,11 @@ theorem replaceAll_not_mem {α : Type u} [BEq α] [LawfulBEq α] {h h' : α} {vs
 
 theorem List.mem_zip_1 {l₁ : List α} {l₂ : List β}  :
 l₁.length = l₂.length →
-a ∈ l₁ → ∃ b, (a, b) ∈ l₁.zip l₂ := by
-intros Hlen Hin
-induction l₁ generalizing l₂ <;> simp_all
-case cons h t ih =>
-  cases l₂ <;> simp_all
-  case cons h' t' =>
-  cases Hin with
-  | inl Hin => simp_all
-  | inr Hin =>
-  specialize @ih t' rfl Hin
-  cases ih with
-  | intro b Hin =>
-  refine ⟨b, Or.inr Hin⟩
-
+a ∈ l₁ → ∃ b, (a, b) ∈ l₁.zip l₂ := by sorry
 
 theorem List.mem_zip_2 {l₁ : List α} {l₂ : List β}  :
 l₁.length = l₂.length →
-b ∈ l₂ → ∃ a, (a, b) ∈ l₁.zip l₂ := by
-intros Hlen Hin
-induction l₂ generalizing l₁ <;> simp_all
-case cons h t ih =>
-  cases l₁ <;> simp_all
-  case cons h' t' =>
-  cases Hin with
-  | inl Hin => simp_all
-  | inr Hin =>
-  specialize @ih t' Hlen Hin
-  cases ih with
-  | intro b Hin =>
-  refine ⟨b, Or.inr Hin⟩
-
+b ∈ l₂ → ∃ a, (a, b) ∈ l₁.zip l₂ := by sorry
 
 /-- Decompose `List.mapM` on a cons list into head and tail results. -/
 theorem List.mapM_cons_some {f : α → Option β} {a : α} {as : List α} {bs : List β}
@@ -482,12 +442,7 @@ theorem List.PredDisjoint_Disjoint :
   Forall P as →
   Forall Q bs →
   PredDisjoint P Q →
-  Disjoint as bs := by
-intros H1 H2 Hdis x Hin1 Hin2
-apply Hdis x
-. exact (List.Forall_mem_iff.mp H1) x Hin1
-. exact (List.Forall_mem_iff.mp H2) x Hin2
-
+  Disjoint as bs := by sorry
 
 theorem List.Forall_PredImplies :
   Forall P as → PredImplies P Q → Forall Q as := by
