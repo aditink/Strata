@@ -34,6 +34,16 @@ structure Translate.State where
       To convert the type to use de Bruijn indices at the current level, we need
       to "sanitize" it by calling `sanitizeExpr` with the current level. -/
   bvars : Std.HashMap Var (Expr × Nat) := {}
+  /-- Symbols given a concrete interpretation, as `(type, value)`.
+
+      A symbol here is *not* bound by an outer `forall`; occurrences resolve to
+      the given closed term instead. This is what lets a datatype sort denote to
+      a generated inductive, and its constructors and selectors to that type's
+      real constructors and projections, rather than to fresh variables about
+      which nothing is known.
+
+      Consulted before `bvars`, so an interpreted symbol wins over a binder. -/
+  consts : Std.HashMap Var (Expr × Expr) := {}
 deriving Repr
 
 abbrev TranslateM := StateT Translate.State (Except MessageData)
@@ -74,6 +84,11 @@ where
 
 def findVar (v : Var) : TranslateM (Expr × Expr) := do
   let state ← get
+  -- Interpreted symbols first: they are closed terms, so no de Bruijn
+  -- adjustment applies and no binder was introduced for them.
+  match state.consts[v]? with
+  | some (t, e) => return (t, e)
+  | none =>
   match state.bvars[v]? with
   | some (t, i) =>
     return (sanitizeExpr t (state.level - i), .bvar (state.level - i - 1))
@@ -326,7 +341,7 @@ def translateTerm (t : SMT.Term) : TranslateM (Expr × Expr) := do
     let translateBinder := fun v => do
       let n := symbolToName v.id
       let t ← translateSort v.ty
-      modify fun s => { level := s.level + 1, bvars := s.bvars.insert (.bv v) (t, s.level) }
+      modify fun s => { s with level := s.level + 1, bvars := s.bvars.insert (.bv v) (t, s.level) }
       return (n, t)
     let ns ← ns.mapM translateBinder
     let (_, b) ← translateTerm b
@@ -617,7 +632,8 @@ terms that quantify over values of that sort remain type-correct.
 -/
 def withTypeDecls (uss : Array DL.SMT.Sort) (k : TranslateM Expr) : TranslateM Expr := do
   let state ← get
-  let decls ← uss.mapM translateTypeDecl
+  let interpreted := state.consts
+  let decls ← (uss.filter fun us => !interpreted.contains (.us us)).mapM translateTypeDecl
   let b ← k
   set state
   return decls.flatten.foldr (fun (n, t, bi) b => .forallE n t b bi) b
@@ -625,12 +641,12 @@ where
   translateTypeDecl (us : DL.SMT.Sort) : TranslateM (Array (Name × Expr × BinderInfo)) := do
     let n := symbolToName us.name
     let t := us.arity.repeatTR (.forallE .anonymous (.sort 1) · .default) (.sort 1)
-    modify fun s => { level := s.level + 1, bvars := s.bvars.insert (.us us) (t, s.level) }
+    modify fun s => { s with level := s.level + 1, bvars := s.bvars.insert (.us us) (t, s.level) }
     let hn := `inst
     let xs := (Array.range us.arity).map Expr.bvar
     let nonempty := .app (.const ``Nonempty [1]) (mkAppN (.bvar us.arity) xs.reverse)
     let ht := us.arity.repeatTR (.forallE `α (.sort 1) · .default) nonempty
-    modify fun s => { level := s.level + 1, bvars := s.bvars.insert (.is us) (ht, s.level) }
+    modify fun s => { s with level := s.level + 1, bvars := s.bvars.insert (.is us) (ht, s.level) }
     return #[(n, t, .default), (hn, ht, .instImplicit)]
 
 /--
@@ -650,7 +666,7 @@ where
     let n := symbolToName is.fst
     let t := .sort 1
     let v ← translateSort is.snd
-    modify fun s => { level := s.level + 1, bvars := s.bvars.insert (.us { name := is.fst, arity := 0 }) (t, s.level) }
+    modify fun s => { s with level := s.level + 1, bvars := s.bvars.insert (.us { name := is.fst, arity := 0 }) (t, s.level) }
     return (n, t, v)
 
 /--
@@ -658,7 +674,8 @@ Introduce uninterpreted function declarations as outer `forall` binders.
 -/
 def withFunDecls (ufs : Array UF) (k : TranslateM Expr) : TranslateM Expr := do
   let state ← get
-  let decls ← ufs.mapM translateFunDecl
+  let interpreted := state.consts
+  let decls ← (ufs.filter fun uf => !interpreted.contains (.uf uf)).mapM translateFunDecl
   let b ← k
   set state
   return decls.foldr (fun (n, t) b => .forallE n t b .default) b
@@ -672,7 +689,7 @@ where
       return (.anonymous, t)
     let s ← translateSort uf.out
     let t := ps.foldr (fun (n, t) b => .forallE n t b .default) s
-    set { level := state.level + 1, bvars := state.bvars.insert (.uf uf) (t, state.level) : Translate.State }
+    set { state with level := state.level + 1, bvars := state.bvars.insert (.uf uf) (t, state.level) }
     return (n, t)
 
 /--
@@ -697,12 +714,12 @@ where
     let n := symbolToName f.id
     let t := ps.foldr (fun (n, t) b => .forallE n t b .default) s
     let v := ps.foldr (fun (n, t) b => .lam n t b .default) b
-    set { level := state.level + 1, bvars := state.bvars.insert (.uf f.toUF) (t, state.level) : Translate.State }
+    set { state with level := state.level + 1, bvars := state.bvars.insert (.uf f.toUF) (t, state.level) }
     return (n, t, v)
   translateParam (v : TermVar) : TranslateM (Name × Expr) := do
     let n := symbolToName v.id
     let t ← translateSort v.ty
-    modify fun s => { level := s.level + 1, bvars := s.bvars.insert (.bv v) (t, s.level) }
+    modify fun s => { s with level := s.level + 1, bvars := s.bvars.insert (.bv v) (t, s.level) }
     return (n, t)
 
 /--
@@ -739,6 +756,23 @@ end Translate
 
 def translateQuery (ctx : Core.SMT.Context) (assums : List SMT.Term) (conc : SMT.Term) : Except MessageData Expr :=
   (Translate.translateQuery ctx assums.toArray conc).run' {}
+
+/-- Translate a query with some symbols given a concrete interpretation.
+
+Symbols in *interp* are not bound by outer `forall`s; occurrences resolve to the
+given closed terms. This is how a datatype sort comes to denote a generated
+inductive, and its constructors and selectors that type's real constructors and
+projections -- which is what makes a tag test on a symbolic value decidable by
+case analysis rather than stuck.
+
+The resulting proposition is about that one interpretation, so it is *weaker*
+than the universally quantified form `translateQuery` produces. That is the
+intended reading for bug finding -- a property false in the intended model is a
+bug, one false only in some exotic model is not -- but it means the two must not
+be mixed up: a proof of this does not establish `smtVCsCorrect`. -/
+def translateQueryIn (ctx : Core.SMT.Context) (interp : Std.HashMap Translate.Var (Expr × Expr))
+    (assums : List SMT.Term) (conc : SMT.Term) : Except MessageData Expr :=
+  (Translate.translateQuery ctx assums.toArray conc).run' { consts := interp }
 
 def translateQueryMeta (ctx : Core.SMT.Context) (assums : List SMT.Term) (conc : SMT.Term) : MetaM Expr := do
   Lean.ofExcept (translateQuery ctx assums conc)
