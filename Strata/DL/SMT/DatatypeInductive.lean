@@ -277,4 +277,84 @@ def blockTexts (datatypes : List (LDatatype CoreIDMeta)) : Except String (List S
   if out.isEmpty then throw "no datatypes to generate"
   return out.toList
 
+/-! ## Operations
+
+The type alone is not enough: the obligations talk about a datatype through its
+tag, its constructors and its selectors. Generated as ordinary `match`
+definitions, those compute, which is the whole point -- `cases v` on a symbolic
+value leaves a concrete constructor in each branch and every tag test reduces by
+`rfl`. Under the uninterpreted encoding the same dispatch was simply stuck.
+-/
+
+/-- Every generated type needs `Inhabited`, since a selector must be total and
+returns `default` outside its own constructor. -/
+def inhabitedText (group : List (LDatatype CoreIDMeta)) : String :=
+  "deriving instance Inhabited for " ++ ", ".intercalate (group.map (typeName ·.name))
+
+/-- Binders carrying the block's parameters into an operation. -/
+private def opBinders (params : List String) : String :=
+  if params.isEmpty then ""
+  else
+    let names := " ".intercalate (params.map paramName)
+    let inh := " ".intercalate (params.map fun p => "[Inhabited " ++ paramName p ++ "]")
+    " {" ++ names ++ " : Type} " ++ inh
+
+/-- The datatype applied to its parameters. -/
+private def applyParams (params : List String) (dt : String) : String :=
+  if params.isEmpty then typeName dt
+  else typeName dt ++ " " ++ " ".intercalate (params.map paramName)
+
+/-- Wildcards for one constructor's fields, for a non-matching branch. -/
+private def wildcards (c : LConstr CoreIDMeta) : String :=
+  String.join (c.args.map fun _ => " _")
+
+/-- `tag`, mapping a value to the index of the constructor that built it.
+
+The index is the constructor's position, matching what `DatatypeEncoding`
+rewrites a tester to, so the two encodings agree on what a tag means. -/
+def tagDefText (params : List String) (d : LDatatype CoreIDMeta) : String :=
+  let header :=
+    "def " ++ typeName d.name ++ ".tag" ++ opBinders params ++ " : " ++
+    applyParams params d.name ++ " → Int"
+  let arms := d.constrs.zipIdx.map fun (c, i) =>
+    "  | ." ++ quoted c.name.name ++ wildcards c ++ " => " ++ toString i
+  "\n".intercalate (header :: arms)
+
+/-- One selector, total, returning `default` off its own constructor.
+
+Core selectors are partial in the same way -- `Any..as_int` says nothing about a
+value that is not an integer -- so a default loses nothing that was there. -/
+def selectorDefText (known params : List String) (d : LDatatype CoreIDMeta)
+    (owner : LConstr CoreIDMeta) (field : String) (ty : LMonoTy) : Option String := do
+  let rendered ← renderTy known params ty
+  let header :=
+    "def " ++ typeName d.name ++ "." ++ quoted field ++ opBinders params ++ " : " ++
+    applyParams params d.name ++ " → " ++ rendered
+  let hit := "  | ." ++ quoted owner.name.name ++
+    String.join (owner.args.map fun (f, _) =>
+      if f.name == field then " " ++ quoted field else " _") ++
+    " => " ++ quoted field
+  let miss := if d.constrs.length == 1 then "" else "\n  | _ => default"
+  return header ++ "\n" ++ hit ++ miss
+
+/-- Tag and selector definitions for one group, in declaration order.
+
+A field name is taken from the first constructor that declares it: Core keeps
+selector names unique within a datatype, so a repeat would be the same selector.
+-/
+def operationTexts (known params : List String) (group : List (LDatatype CoreIDMeta)) :
+    Except String (List String) := do
+  let mut out := #[inhabitedText group]
+  for d in group do
+    out := out.push (tagDefText params d)
+    let mut seen : List String := []
+    for c in d.constrs do
+      for (field, ty) in c.args do
+        if seen.contains field.name then continue
+        seen := field.name :: seen
+        match selectorDefText known params d c field.name ty with
+        | none => throw s!"selector {field.name} of {d.name} has no Lean type"
+        | some t => out := out.push t
+  return out.toList
+
 end Strata.SMT.DatatypeInductive

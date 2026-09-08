@@ -31,14 +31,24 @@ def datatypesOf (p : Program) :
     | .ok (e, _) => e.datatypes.allDatatypes
     | .error _ => []
 
+open Strata.SMT.DatatypeInductive in
+/-- Emit the types and their operations for a program. -/
 def emitDatatypes (p : Program) : CommandElabM Unit := do
-  match Strata.SMT.DatatypeInductive.blockTexts (datatypesOf p) with
+  let dts := datatypesOf p
+  let usable := dts.filter (·.typeArgs.isEmpty)
+  let names := usable.map (·.name)
+  let params := openBaseTypes names usable
+  let elabText := fun (src : String) => do
+    match Parser.runParserCategory (← getEnv) `command src "<generated>" with
+    | .error e => throwError "parse failed: {e}\n{src}"
+    | .ok stx => elabCommand stx
+  match blockTexts dts with
   | .error e => throwError "refused: {e}"
-  | .ok srcs =>
-    for src in srcs do
-      match Parser.runParserCategory (← getEnv) `command src "<generated>" with
-      | .error e => throwError "parse failed: {e}\n{src}"
-      | .ok stx => elabCommand stx
+  | .ok srcs => for src in srcs do elabText src
+  for group in dependencyGroups usable do
+    match operationTexts names params group with
+    | .error e => throwError "operations refused: {e}"
+    | .ok srcs => for src in srcs do elabText src
 
 private def valPgm : Program :=
 #strata
@@ -76,6 +86,16 @@ example (x : Int) (b : Prop) :
 
 example (x y : Int) (h : Strata.Gen.«Val».«VInt» x = .«VInt» y) : x = y := by
   simpa using h
+
+-- Tag and selectors compute, so no law has to be assumed about them.
+example (x : Int) : (Strata.Gen.«Val».«VInt» x).tag = 0 := rfl
+example (x : Int) : (Strata.Gen.«Val».«VInt» x).«getInt» = x := rfl
+
+/-- The capability the uninterpreted encoding cannot provide: deciding a tag on
+a *symbolic* value. Every Laurel coercion is a chain of these, which is why the
+signature-only encoding cannot verify translated Python. -/
+example (v : Strata.Gen.«Val») : v.tag = 0 ∨ v.tag = 1 ∨ v.tag = 2 := by
+  cases v <;> simp [Strata.Gen.«Val».tag]
 
 -- Positivity within a group is checked defensively rather than tested here:
 -- the only way to trigger it is a datatype keyed by itself, and Core's own type
