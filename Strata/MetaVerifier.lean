@@ -202,11 +202,12 @@ private def sanitizeSMTContext (ctx : Core.SMT.Context)
   let base := SMT.SanitizedContext.ofCore ctx
   let rewrite := SMT.DatatypeEncoding.rewriteTerm enc
   { base with
-    -- Datatype symbols first, so that after `denoteQuery` reverses the context
-    -- they sit at the *tail*, which is where `denoteQuerySupplying` expects the
-    -- symbols it is to interpret rather than quantify. Order is otherwise
+    -- Placed so that, once the context is reversed into binder order, the
+    -- datatype sorts lead and the datatype functions trail -- which is the
+    -- split `denoteQuerySupplying` interprets rather than quantifies. The two
+    -- go opposite ways for the reasons given there. Order is otherwise
     -- immaterial: it only permutes the outer binders.
-    sorts := enc.sorts ++ base.sorts
+    sorts := base.sorts ++ enc.sorts
     ufs := enc.ufs ++ base.ufs
     ifs := base.ifs.map fun f => { f with body := rewrite f.body }
     axms := base.axms.map rewrite }

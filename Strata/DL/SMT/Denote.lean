@@ -1228,6 +1228,31 @@ noncomputable def bindIFsTop (sctx : SortContext) (vs : TermVarContext) (ufs : U
     bindIFsTop sctx vs ufs ifs (← bindIF iF { sctx, tctx := { vs, ufs := ifs.map IF.toUF ++ ufs } } ft')
 
 /--
+Eliminate all uninterpreted sort binders by repeatedly applying `bindUS`.
+
+Top level rather than a local helper so the interpreted-denotation variant can
+reuse it; behaviour is unchanged.
+-/
+@[simp]
+noncomputable def bindUSsTop (iss : ISContext) :
+    (uss : USContext) → (SortDenoteInput ⟨uss, iss⟩ → Prop) →
+    Option (SortDenoteInput ⟨[], iss⟩ → Prop)
+  | [], ft' => return ft'
+  | _ :: uss, ft' => do bindUSsTop iss uss (← bindUS uss iss ft')
+
+/--
+Eliminate all uninterpreted-function binders by repeatedly applying `bindUF`.
+
+Top level for the same reason as `bindUSsTop`.
+-/
+@[simp]
+noncomputable def bindUFsTop (sctx : SortContext) (vs : TermVarContext) :
+    (ufs : UFContext) → (TermDenoteInput ⟨sctx, ⟨vs, ufs⟩⟩ → Prop) →
+    Option (TermDenoteInput ⟨sctx, ⟨vs, []⟩⟩ → Prop)
+  | [], ft' => return ft'
+  | _ :: ufs, ft' => do bindUFsTop sctx vs ufs (← bindUF { sctx, tctx := { vs, ufs } } ft')
+
+/--
 Interpret a closed boolean term under SMT declarations.
 
 `denoteTerm` is context-parametric: it interprets a term relative to explicit
@@ -1245,28 +1270,18 @@ noncomputable def denoteBoolTermFromContext
   let t := substituteTermIS iss t
   let ⟨.prim .bool, _, ft⟩ ← denoteTerm ⟨⟨uss, iss⟩, ⟨{}, ifs.map IF.toUF ++ ufs⟩⟩ t | none
   let ft ← bindIFsTop ⟨uss, iss⟩ {} ufs ifs ft
-  let ft ← bindUFs ⟨uss, iss⟩ {} ufs ft
+  let ft ← bindUFsTop ⟨uss, iss⟩ {} ufs ft
   let ft ← bindISs uss iss fun ⟨sΓ, hsΓ⟩ =>
     let tΓ : TermEnvironment ⟨sΓ, hsΓ⟩ := { vs := {}, ufs := {} }
     let htΓ : tΓ.WF { vs := {}, ufs := {} } :=
       { hv := { h := rfl, ha := fun _ hi => nomatch hi },
         huf := { h := rfl, ha := fun _ hi => nomatch hi } }
     ft { sΓ, hsΓ, tΓ, htΓ }
-  let ft ← bindUSs uss [] ft
+  let ft ← bindUSsTop [] uss ft
   let sΓ : SortEnvironment := {}
   let hsΓ : sΓ.WF {} := { h := rfl, ha := fun _ hi => nomatch hi }
   return PLift.up (ft { sΓ, hsΓ })
 where
-  /--
-  Eliminate all uninterpreted sort binders by repeatedly applying `bindUS`.
-  -/
-  @[simp]
-  bindUSs uss iss (ft' : SortDenoteInput ⟨uss, iss⟩ → Prop) : Option (SortDenoteInput ⟨[], iss⟩ → Prop) :=
-    do match uss with
-    | [] => return ft'
-    | _ :: uss =>
-      let ft ← bindUS uss iss ft'
-      bindUSs uss iss ft
   /--
   Eliminate interpreted-sort aliases. They are already substituted, so this
   step only reindexes the context shape.
@@ -1274,16 +1289,6 @@ where
   @[simp]
   bindISs uss iss (ft' : SortDenoteInput ⟨uss, iss⟩ → Prop) : Option (SortDenoteInput ⟨uss, []⟩ → Prop) :=
     return fun (tdi : SortDenoteInput ⟨uss, []⟩) => ft' ⟨tdi.sΓ, tdi.hsΓ⟩
-  /--
-  Eliminate all uninterpreted-function binders by repeatedly applying `bindUF`.
-  -/
-  @[simp]
-  bindUFs sctx vs ufs (ft' : TermDenoteInput ⟨sctx, ⟨vs, ufs⟩⟩ → Prop) : Option (TermDenoteInput ⟨sctx, ⟨vs, []⟩⟩ → Prop) :=
-    do match ufs with
-    | [] => return ft'
-    | _ :: ufs =>
-      let ft ← bindUF { sctx, tctx := { vs, ufs } } ft'
-      bindUFs sctx vs ufs ft
 
 def mkISContext (iss : Map String TermType) : ISContext :=
   go {} iss
@@ -1315,11 +1320,22 @@ Nothing then decides a tag test on a symbolic value, which is the shape every
 Laurel coercion takes.
 
 The alternative is to *supply* those symbols rather than quantify over them.
-That needs no new eliminator: `bindUSs` already peels binders off the head of
-the context and applies the result to the empty environment, so binding only the
-uninterpreted prefix and applying to a non-empty environment gives exactly the
-interpreted reading. Interpreted symbols must therefore sit at the tail of the
-context, which is the caller's job to arrange.
+Supplying is much simpler than binding: where `bindUS` has to introduce a
+`forall`, supplying only prepends the given values to the environment the bound
+part will produce. No dual of `bindUS`/`bindUF` is needed.
+
+## Why the supplied symbols go at the head
+
+They must come *first* in the context, and the reason is about definitional
+reduction rather than taste. `denoteSort` resolves a sort by its index in
+`sctx.uss` and reads `sΓ` at that index, so the type a caller must inhabit to
+interpret a datatype function is `.. sΓ[i].usΓ ..`. With the supplied values at
+the head, `sΓ` is `preΓ ++ boundΓ` for a *concrete* `preΓ`, and `(preΓ ++
+boundΓ)[i]` reduces to `preΓ[i]` by unfolding `List.append` -- so the obligation
+presents as the generated inductive and the caller can just write the function.
+Putting them at the tail instead leaves `(boundΓ ++ preΓ)[boundΓ.length + i]`,
+which is only provably `preΓ[i]`, not definitionally so, and the caller is stuck
+writing casts.
 
 The resulting proposition is about one interpretation and is *weaker* than the
 quantified form. That is the right reading for bug finding -- a property false in
@@ -1328,23 +1344,38 @@ proof of it does not establish `denoteQuery`'s statement, and the two must not
 be conflated.
 -/
 
-/-- Bind the sorts in `pre`, leaving those in `rest` to be supplied. -/
-@[simp]
-noncomputable def bindUSsPrefix (rest : USContext) (iss : ISContext) :
-    (pre : USContext) → (SortDenoteInput ⟨pre ++ rest, iss⟩ → Prop) →
-    Option (SortDenoteInput ⟨rest, iss⟩ → Prop)
-  | [], ft => return ft
-  | _ :: pre, ft => do bindUSsPrefix rest iss pre (← bindUS (pre ++ rest) iss ft)
+/-- Well-formedness of a concatenated sort environment. -/
+theorem USEnvironment.wfAppend {pre rest : USContext} {preΓ Γ : USEnvironment}
+    (hpre : USEnvironment.WF pre preΓ) (hrest : USEnvironment.WF rest Γ) :
+    USEnvironment.WF (pre ++ rest) (preΓ ++ Γ) where
+  h := by simp [hpre.h, hrest.h]
+  ha := by
+    intro i hi
+    by_cases hlt : i < pre.length
+    · rw [List.getElem_append_left hlt, List.getElem_append_left (hpre.h ▸ hlt)]
+      exact hpre.ha i hlt
+    · have hi' : i - pre.length < rest.length := by
+        simp only [List.length_append] at hi; omega
+      rw [List.getElem_append_right (Nat.le_of_not_lt hlt),
+          List.getElem_append_right (hpre.h ▸ Nat.le_of_not_lt hlt)]
+      simpa [hpre.h] using hrest.ha (i - pre.length) hi'
 
-/-- Bind the functions in `pre`, leaving those in `rest` to be supplied. -/
-@[simp]
-noncomputable def bindUFsPrefix (sctx : SortContext) (vs : TermVarContext)
-    (rest : UFContext) :
-    (pre : UFContext) → (TermDenoteInput ⟨sctx, ⟨vs, pre ++ rest⟩⟩ → Prop) →
-    Option (TermDenoteInput ⟨sctx, ⟨vs, rest⟩⟩ → Prop)
-  | [], ft => return ft
-  | _ :: pre, ft => do
-    bindUFsPrefix sctx vs rest pre (← bindUF { sctx, tctx := { vs, ufs := pre ++ rest } } ft)
+/-- The same for a concatenated function environment. -/
+theorem UFEnvironment.wfAppend {sctx : SortContext} {sΓ : SortDenoteInput sctx}
+    {pre rest : UFContext} {preΓ Γ : UFEnvironment sΓ}
+    (hpre : UFEnvironment.WF pre preΓ) (hrest : UFEnvironment.WF rest Γ) :
+    UFEnvironment.WF (pre ++ rest) (preΓ ++ Γ) where
+  h := by simp [hpre.h, hrest.h]
+  ha := by
+    intro i hi
+    by_cases hlt : i < pre.length
+    · rw [List.getElem_append_left hlt, List.getElem_append_left (hpre.h ▸ hlt)]
+      exact hpre.ha i hlt
+    · have hi' : i - pre.length < rest.length := by
+        simp only [List.length_append] at hi; omega
+      rw [List.getElem_append_right (Nat.le_of_not_lt hlt),
+          List.getElem_append_right (hpre.h ▸ Nat.le_of_not_lt hlt)]
+      simpa [hpre.h] using hrest.ha (i - pre.length) hi'
 
 /-- Well-formedness from a plain list equality.
 
@@ -1369,57 +1400,78 @@ theorem UFEnvironment.wfOfMapEq {sctx : SortContext} {sΓ : SortDenoteInput sctx
     subst h
     simp
 
-/-- Interpret a query with the tail of its context supplied rather than bound.
+/-- Bind the functions in `pre`, leaving those in `rest` to be supplied. -/
+@[simp]
+noncomputable def bindUFsPrefix (sctx : SortContext) (vs : TermVarContext)
+    (rest : UFContext) :
+    (pre : UFContext) → (TermDenoteInput ⟨sctx, ⟨vs, pre ++ rest⟩⟩ → Prop) →
+    Option (TermDenoteInput ⟨sctx, ⟨vs, rest⟩⟩ → Prop)
+  | [], ft => return ft
+  | _ :: pre, ft => do
+    bindUFsPrefix sctx vs rest pre (← bindUF { sctx, tctx := { vs, ufs := pre ++ rest } } ft)
 
-`ussBind ++ ussSupply` and `ufsBind ++ ufsSupply` split the context: the first
-part is universally quantified as usual, the second is given by *sΓ* and *ufΓ*.
-The supplied parts must be the tail, because `bindUSs`/`bindUFs` peel from the
-head.
+/-- Interpret a query with part of its context supplied rather than bound.
 
-*ufΓ* is a function of the sort environment rather than a plain value: a
-`UFDenote` is indexed by the sorts, so a function's interpretation cannot be
-stated before them. In practice it is constant, the sorts being concrete.
+The context splits as `ussSupply ++ ussBind` for sorts and `ufsBind ++
+ufsSupply` for functions: the supplied sorts come *first*, the supplied
+functions *last*. The asymmetry is forced, and for two different reasons.
 
-Type synonyms are not supported here -- they are substituted into the term
-before binding, which would have to be reconciled with the split. Callers that
-need both can substitute first. -/
+Sorts must be supplied at the head so that the environment reads `sΓ ++
+bound.sΓ` with `sΓ` a concrete list. `denoteSort` resolves a sort by its index
+and reads the environment there, so `(sΓ ++ bound.sΓ)[i]` unfolds to `sΓ[i]` and
+a function's type presents as the real generated type. At the tail the analogous
+term is `(bound.sΓ ++ sΓ)[bound.sΓ.length + i]`, which is only *provably*
+`sΓ[i]`, leaving the caller writing casts.
+
+Functions must be supplied at the tail because `bindUF` peels from the head, so
+binding the bound ones first requires them to be the prefix. Doing them first is
+what makes *ufΓ* writable: it is indexed by the bound sort environment alone,
+not by an arbitrary one. That matters because `USEnvironment.WF` pins only a
+slot's *sort*, never the type interpreting it -- so under an arbitrary `sdi` the
+datatype sort would still be uninterpreted and the caller could not produce the
+generated function at all. -/
 @[simp]
 noncomputable def denoteBoolTermSupplying
-    (ussBind ussSupply : USContext)
+    (ussSupply ussBind : USContext)
     (ufsBind ufsSupply : UFContext) (ifs : List IF) (t : Term)
     (sΓ : SortEnvironment) (hsΓ : USEnvironment.WF ussSupply sΓ)
-    (ufΓ : (sdi : SortDenoteInput ⟨ussBind ++ ussSupply, []⟩) → UFEnvironment sdi)
-    (hufΓ : ∀ sdi, (ufΓ sdi).WF ufsSupply) : Option (PLift Prop) := do
-  let uss := ussBind ++ ussSupply
+    (ufΓ : (bound : SortDenoteInput ⟨ussBind, []⟩) →
+      UFEnvironment (⟨sΓ ++ bound.sΓ, USEnvironment.wfAppend hsΓ bound.hsΓ⟩ :
+        SortDenoteInput ⟨ussSupply ++ ussBind, []⟩))
+    (hufΓ : ∀ bound, (ufΓ bound).WF ufsSupply) : Option (PLift Prop) := do
+  let uss := ussSupply ++ ussBind
   let ufs := ufsBind ++ ufsSupply
   let ⟨.prim .bool, _, ft⟩ ← denoteTerm ⟨⟨uss, []⟩, ⟨{}, ifs.map IF.toUF ++ ufs⟩⟩ t | none
   let ft ← bindIFsTop ⟨uss, []⟩ {} ufs ifs ft
   let ft ← bindUFsPrefix ⟨uss, []⟩ {} ufsSupply ufsBind ft
-  -- Sorts still abstract here, so the supplied functions are applied inside.
-  let ft' : SortDenoteInput ⟨uss, []⟩ → Prop := fun sdi =>
-    ft { sΓ := sdi.sΓ, hsΓ := sdi.hsΓ, tΓ := { vs := {}, ufs := ufΓ sdi },
+  let g : SortDenoteInput ⟨ussBind, []⟩ → Prop := fun bound =>
+    ft { sΓ := sΓ ++ bound.sΓ, hsΓ := USEnvironment.wfAppend hsΓ bound.hsΓ,
+         tΓ := { vs := {}, ufs := ufΓ bound },
          htΓ := { hv := { h := rfl, ha := fun _ hi => nomatch hi },
-                  huf := hufΓ sdi } }
-  let ft ← bindUSsPrefix ussSupply [] ussBind ft'
-  return PLift.up (ft ⟨sΓ, hsΓ⟩)
+                  huf := hufΓ bound } }
+  let ft ← bindUSsTop [] ussBind g
+  return PLift.up (ft ⟨{}, { h := rfl, ha := fun _ hi => nomatch hi }⟩)
 
-/-- Interpret an SMT query with the last `nSorts` sorts and `nUFs` functions of
-its context supplied rather than quantified.
+/-- Interpret an SMT query with the first `nSorts` sorts and the last `nUFs`
+functions of its context supplied rather than quantified.
 
-The counts are from the tail because `bindUSs`/`bindUFs` peel from the head, so
-a caller wanting a symbol interpreted must have placed it last. Type synonyms
-and datatype machinery are refused, as in `denoteQuery`.
+Both counts are against the *reversed* context, which is the order the binders
+appear in. So a caller wanting a sort interpreted must have placed it last in
+`ctx.sorts`, and a function interpreted must have placed it first in `ctx.ufs`.
+Type synonyms and datatype machinery are refused, as in `denoteQuery`.
 
 Weaker than `denoteQuery` on the same query: it speaks about one interpretation
 rather than all of them. -/
 @[simp]
 noncomputable def denoteQuerySupplying (ctx : Core.SMT.Context) (nSorts nUFs : Nat)
     (sΓ : SortEnvironment)
-    (hsΓ : USEnvironment.WF ((ctx.sorts.toList.reverse).drop nSorts) sΓ)
-    (ufΓ : (sdi : SortDenoteInput
-      ⟨(ctx.sorts.toList.reverse).take nSorts ++ (ctx.sorts.toList.reverse).drop nSorts, []⟩) →
-      UFEnvironment sdi)
-    (hufΓ : ∀ sdi, (ufΓ sdi).WF ((ctx.ufs.toList.reverse).drop nUFs))
+    (hsΓ : USEnvironment.WF ((ctx.sorts.toList.reverse).take nSorts) sΓ)
+    (ufΓ : (bound : SortDenoteInput ⟨(ctx.sorts.toList.reverse).drop nSorts, []⟩) →
+      UFEnvironment (⟨sΓ ++ bound.sΓ, USEnvironment.wfAppend hsΓ bound.hsΓ⟩ :
+        SortDenoteInput ⟨(ctx.sorts.toList.reverse).take nSorts ++
+          (ctx.sorts.toList.reverse).drop nSorts, []⟩))
+    (hufΓ : ∀ bound, (ufΓ bound).WF
+      ((ctx.ufs.toList.reverse).drop (ctx.ufs.toList.length - nUFs)))
     (assums : List Term) (conc : Term) : Option Prop := do
   if !ctx.datatypes.factory.isEmpty || !ctx.seenDatatypes.isEmpty
       || !ctx.datatypeFuns.isEmpty then none
@@ -1429,5 +1481,6 @@ noncomputable def denoteQuerySupplying (ctx : Core.SMT.Context) (nSorts nUFs : N
   let uss := ctx.sorts.toList.reverse
   let ufs := ctx.ufs.toList.reverse
   let ifs := ctx.ifs.toList.reverse
+  let split := ctx.ufs.toList.length - nUFs
   (denoteBoolTermSupplying (uss.take nSorts) (uss.drop nSorts)
-    (ufs.take nUFs) (ufs.drop nUFs) ifs t sΓ hsΓ ufΓ hufΓ).map PLift.down
+    (ufs.take split) (ufs.drop split) ifs t sΓ hsΓ ufΓ hufΓ).map PLift.down
