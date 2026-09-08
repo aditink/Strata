@@ -479,6 +479,82 @@ def genDatatypeInterp (ctx : Core.SMT.Context) :
         m := m.insert (.uf uf) ((← getConstInfo c).type, Lean.mkConst c)
   return m
 
+/-- The carrier interpreting a sort, and the `Nonempty` witness for it.
+
+`none` for a sort with no generated counterpart, which then stays quantified. -/
+def sortCarrier (s : Strata.DL.SMT.Sort) : MetaM (Option String) := do
+  if s.name == SMT.RealAbstraction.realSortName then
+    return some "_root_.Strata.SMT.DatatypeInductive.Real"
+  let some c ← resolveGen [s.name] | return none
+  -- A generated block carrying a base type with no Lean image is parameterised
+  -- over it; `real` is the only such type the Laurel prelude produces, so every
+  -- parameter is applied to the same opaque carrier. The arity is read off the
+  -- constant rather than recomputed, so this cannot drift from the generator.
+  let mut ty ← Meta.inferType (Lean.mkConst c)
+  let mut args := ""
+  while ty.isForall do
+    args := args ++ " _root_.Strata.SMT.DatatypeInductive.Real"
+    ty := ty.bindingBody!
+  -- `_root_`-anchored: the emitted text may be elaborated inside a namespace,
+  -- and a relative name would resolve again against it.
+  return some (if args.isEmpty then s!"_root_.{c}" else s!"(_root_.{c}{args})")
+
+/-- Whether a function has a generated counterpart we can supply. -/
+def ufResolvable (uf : UF) : MetaM Bool := do
+  let some cs := genComponentsOf uf | return false
+  return (← resolveGen cs).isSome
+
+/-- How much of a context's head we can interpret, and how much of its tail. -/
+def interpSplit (ctx : Core.SMT.Context) : MetaM (Nat × Nat) := do
+  let uss := ctx.sorts.toList.reverse
+  let ufs := ctx.ufs.toList.reverse
+  let mut nSorts := 0
+  for s in uss do
+    if (← sortCarrier s).isSome then nSorts := nSorts + 1 else break
+  let mut nUFs := 0
+  for uf in ufs.reverse do
+    if ← ufResolvable uf then nUFs := nUFs + 1 else break
+  return (nSorts, nUFs)
+
+/-- A `SuppliedInterp` for a program's datatypes, as Lean source.
+
+Emitted as text and elaborated, matching how the inductives themselves are
+produced: the declaration is dependently typed and every proof obligation in it
+discharges by `rfl`, which the elaborator is far better placed to check than a
+hand-built `Expr` would be. Literals go through `reprStr`, which round-trips as
+fully-qualified Lean source, so the emitted `UF`s cannot drift from the ones the
+encoder built. -/
+def interpText (name : String) (ctx : Core.SMT.Context) : MetaM String := do
+  -- `reprStr` wraps long values across lines. The generated declaration uses
+  -- `where`-block layout, where a continuation at column 1 reads as the end of
+  -- the field, so every rendered literal is flattened onto one line.
+  let flat := fun {α : Type} [Repr α] (x : α) => (reprStr x).replace "\n" " "
+  let uss := ctx.sorts.toList.reverse
+  let ufs := ctx.ufs.toList.reverse
+  let (nSorts, nUFs) ← interpSplit ctx
+  let supUss := uss.take nSorts
+  let supUfs := ufs.drop (ufs.length - nUFs)
+  let mut sGamma := #[]
+  for s in supUss do
+    let some carrier ← sortCarrier s | throwError "no carrier for sort {s.name}"
+    sGamma := sGamma.push
+      s!"    \{ us := {flat s}, usΓ := {carrier}, nonempty := ⟨default⟩ }"
+  let mut ufGamma := #[]
+  for uf in supUfs do
+    let some cs := genComponentsOf uf | throwError "no generated name for {uf.id}"
+    let some c ← resolveGen cs | throwError "unresolved generated name for {uf.id}"
+    ufGamma := ufGamma.push
+      s!"    \{ uf := {flat uf}, h := rfl, ufΓ := _root_.{c} }"
+  let list := fun (xs : Array String) =>
+    if xs.isEmpty then "[]" else "[\n" ++ ",\n".intercalate xs.toList ++ "]"
+  return s!"noncomputable def {name} : _root_.SuppliedInterp where\n" ++
+    s!"  uss := {flat supUss}\n" ++
+    s!"  sΓ := {list sGamma}\n" ++
+    "  hsΓ := _root_.USEnvironment.wfOfMapEq rfl\n" ++
+    s!"  ufs := {flat supUfs}\n" ++
+    s!"  ufΓ := fun _ _ => {list ufGamma}\n" ++
+    "  hufΓ := fun _ _ => _root_.UFEnvironment.wfOfMapEq rfl\n"
+
 /-- `createGoal`, but with the datatype symbols interpreted rather than bound. -/
 def createGoalIn : SMTVC → MetaM MVarId := fun (label, ctx, ts, t) => do
   let core := ctx.toCore

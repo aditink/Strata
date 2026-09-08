@@ -62,6 +62,27 @@ open Lean Lambda
 dialect value of the same name. -/
 abbrev CoreIDMeta := _root_.Core.CoreLParams.IDMeta
 
+private opaque RealNonempty : NonemptyType
+
+/-- Carrier for a base type that has no Lean image, `real` being the only one
+the Laurel prelude produces.
+
+Opaque on purpose. A generated datatype carrying a `real` has to be applied to
+*some* type, and picking a concrete one would be unsound in both directions: it
+would let a property be proved that only holds in that model, and it would admit
+a counterexample that is not realizable. An opaque type assumes nothing, so it
+is exactly as strong as leaving the sort quantified -- which is what
+`RealAbstraction` already does to the operations on it.
+
+Modelling `real` faithfully is a separate matter: Python's `float` is IEEE 754
+binary64, not a real, so `real` is the wrong target regardless of how it is
+denoted. -/
+def Real : Type := RealNonempty.type
+
+instance : Nonempty Real := RealNonempty.property
+
+noncomputable instance : Inhabited Real := Classical.inhabited_of_nonempty inferInstance
+
 /-- Namespace for the generated types, keeping them clear of user names.
 
 Relative, not `_root_`-anchored: `_root_` is accepted in a declaration name but
