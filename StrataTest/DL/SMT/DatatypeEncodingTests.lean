@@ -46,7 +46,7 @@ spec {
 -- `$dt.tag.Val v = 0`.
 /--
 info: sorts: #[{ name := "Val", arity := 0 }]
-functions: #["v@1", "$dt.tag.Val", "VInt", "VBool", "VNone", "Val..getInt", "Val..getBool"]
+functions: #["$dt.tag.Val", "VInt", "VBool", "VNone", "Val..getInt", "Val..getBool", "v@1"]
 -/
 #guard_msgs in
 #eval show IO Unit from do
