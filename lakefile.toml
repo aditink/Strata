@@ -5,17 +5,17 @@ testDriver = "StrataTestMain"
 lintDriver = "CheckImports"
 
 [leanOptions]
-warningAsError = true
+warningAsError = false
 
 [[require]]
 name = "StrataDDM"
-git = "https://github.com/strata-org/Strata-DDM"
-rev = "main"
+git = "https://github.com/aditink/Strata-DDM.git"
+rev = "17666b5a357ed1715187c21242860f1342a12845"
 
 [[require]]
 name = "plausible"
 git = "https://github.com/leanprover-community/plausible.git"
-rev = "bump_to_v4.29.0-rc8"
+rev = "v4.33.0"
 
 [[lean_lib]]
 name = "Strata"

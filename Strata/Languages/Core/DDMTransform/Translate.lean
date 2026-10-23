@@ -476,18 +476,18 @@ def translateTypeSynonym (bindings : TransBindings) (op : Operation) :
   let (targs, bindings) ←
     translateOption
       (fun maybearg =>
-            do match maybearg with
-            | none => pure ([], bindings)
-            | some arg =>
-              let bargs ← checkOpArg arg q`Core.mkBindings 1
-              let args ←
-                  match bargs[0]! with
-                  | .seq _ .comma args =>
-                    let (arr, bindings) ← translateTypeBindings bindings args
-                    return (arr.toList, bindings)
-                  | _ => TransM.error
-                          s!"translateTypeSynonym expects a comma separated list: {repr bargs[0]!}")
-                    op.args[2]!
+        match maybearg with
+        | none => pure ([], bindings)
+        | some arg => do
+          let bargs ← checkOpArg arg q`Core.mkBindings 1
+          match bargs[0]! with
+          | .seq _ .comma args => do
+            let (arr, bindings) ← translateTypeBindings bindings args
+            pure (arr.toList, bindings)
+          | _ =>
+            TransM.error s!"translateTypeSynonym expects a comma separated list: {repr bargs[0]!}"
+      )
+      op.args[2]!
   let typedef ← translateLMonoTy bindings op.args[4]!
   let md ← getMetaDataWithAnn op annotsArg
   let decl := Core.Decl.type (.syn { name := name, typeArgs := targs, type := typedef }) md
@@ -502,18 +502,19 @@ def translateTypeDecl (bindings : TransBindings) (op : Operation) :
   let params ←
     translateOption
       (fun maybearg =>
-            do match maybearg with
-            | none => pure []
-            | some arg =>
-              let bargs ← checkOpArg arg q`Core.mkBindings 1
-              match bargs[0]! with
-              | .seq _ .comma args => do
-                args.toList.mapM fun argOp => do
-                  let bindArgs ← checkOpArg argOp q`Core.mkBinding 2
-                  translateIdent String bindArgs[0]!
-              | _ => TransM.error
-                      s!"translateTypeDecl expects a comma separated list: {repr bargs[0]!}")
-                    op.args[2]!
+        match maybearg with
+        | none => pure []
+        | some arg => do
+          let bargs ← checkOpArg arg q`Core.mkBindings 1
+          match bargs[0]! with
+          | .seq _ .comma args => do
+            args.toList.mapM fun argOp => do
+              let bindArgs ← checkOpArg argOp q`Core.mkBinding 2
+              translateIdent String bindArgs[0]!
+          | _ =>
+            TransM.error s!"translateTypeDecl expects a comma separated list: {repr bargs[0]!}"
+      )
+      op.args[2]!
   let md ← getMetaDataWithAnn op annotsArg
   let decl := Core.Decl.type (.con { name := name, params := params }) md
   return (decl, { bindings with freeVars := bindings.freeVars.push decl })

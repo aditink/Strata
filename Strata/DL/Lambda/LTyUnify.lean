@@ -101,7 +101,9 @@ theorem SubstWF_of_popScope (S : Subst) (h : SubstWF S) :
   | cons m rest =>
     simp only [SubstWF, Subst.freeVars, HMaps.pop, HMaps.keys, HMaps.values,
       List.all_eq_true, List.mem_append, List.flatMap_append, decide_eq_true_eq] at h ⊢
-    intro k hk hmem
+    intro k hk
+    apply decide_eq_true
+    intro hmem
     exact h k (Or.inr hk) (Or.inr hmem)
 
 /-- The single-scope substitution `[single id ty]` and its key/value/freeVars. -/
@@ -1355,11 +1357,20 @@ substitution `S`. See `Constraints.unify` for the top-level function.
 def Constraints.unifyCore (cs : Constraints) (S : SubstInfo) :
     Except UnifyError (ValidSubstRelation cs S) := do
   match _h0 : cs with
-  | [] => .ok { newS := S, goodSubset := by simp [Subst.freeVars_subset_prop_of_empty] }
+  | [] =>
+    pure {
+      newS := S
+      goodSubset := by
+        simpa only [_h0] using Subst.freeVars_subset_prop_of_empty S
+    }
   | c :: c_rest =>
     let relS ← Constraint.unifyOne c S |> .mapError (fun e => UnifyError.addOriginalConstraint e c)
     let new_relS ← Constraints.unifyCore c_rest relS.newS
-    .ok { newS := new_relS.newS, goodSubset := by simp [Subst.freeVars_subset_prop_mk_cons] }
+    pure {
+      newS := new_relS.newS
+      goodSubset := by
+        simpa only [_h0] using Subst.freeVars_subset_prop_mk_cons relS new_relS
+    }
   termination_by ((((Constraints.freeVars cs) ++ S.subst.freeVars).uniq.length),
                   Constraints.size cs,
                   1)

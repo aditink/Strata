@@ -196,12 +196,21 @@ theorem Maps.find?_update_self [DecidableEq α]
 
 
 /-- `Maps.insert ms x v` maps `x` to `v`. -/
+private theorem Maps.find?_singleton_of_some [DecidableEq α]
+    (m : Map α β) (x : α) (v : β) (h : Map.find? m x = some v) :
+    Maps.find? [m] x = some v := by
+  simp only [Maps.find?]
+  rw [h]
+
 theorem Maps.find?_insert_self [DecidableEq α]
     (ms : Maps α β) (x : α) (v : β) :
     Maps.find? (Maps.insert ms x v) x = some v := by
   simp only [Maps.insert]; split
   · match ms with
-    | [] => simp [Maps.pop, Maps.push, Maps.newest, Maps.find?, Map.find?_insert_self]
+    | [] =>
+      change Maps.find? [Map.insert ([] : Map α β) x v] x = some v
+      exact Maps.find?_singleton_of_some _ x v
+        (Map.find?_insert_self ([] : Map α β) x v)
     | _ :: _ => simp [Maps.pop, Maps.push, Maps.newest, Maps.find?, Map.find?_insert_self]
   · exact Maps.find?_update_self ms x v (by simp_all)
 
@@ -312,6 +321,34 @@ theorem Maps.find?_of_all_none [DecidableEq α]
 
 
 /-- When `x` is fresh (not found in any scope), `addInNewest` makes it findable. -/
+private theorem Map.find?_singleton_self [inst : DecidableEq α] (x : α) (v : β) :
+    Map.find? ([(x, v)] : Map α β) x = some v := by
+  exact (Map.find?.eq_2 (β := β) x x v []).trans
+    (@if_pos (x = x) (inst x x) rfl (Option β)
+      (some v) (Map.find? [] x))
+
+private theorem Maps.addInNewest_cons_union
+    (m : Map α β) (rest : Maps α β) (new : Map α β) :
+    Maps.addInNewest (m :: rest) new = Map.union m new :: rest := by
+  rfl
+
+private theorem Map.find?_union [DecidableEq α]
+    (l₁ l₂ : Map α β) (x : α) :
+    Map.find? (Map.union l₁ l₂) x = match Map.find? l₁ x with
+      | some v => some v
+      | none => Map.find? l₂ x := by
+  unfold Map.union
+  exact Map.find?_append l₁ l₂ x
+
+private theorem Maps.find?_addInNewest_cons_of [DecidableEq α]
+    (m : Map α β) (rest : Maps α β) (new : Map α β)
+    (x : α) (v : β)
+    (h_old : Map.find? m x = none) (h_new : Map.find? new x = some v) :
+    Maps.find? (Maps.addInNewest (m :: rest) new) x = some v := by
+  rw [Maps.addInNewest_cons_union]
+  simp only [Maps.find?]
+  rw [Map.find?_union, h_old, h_new]
+
 theorem Maps.find?_addInNewest_self [DecidableEq α]
     (ms : Maps α β) (x : α) (v : β)
     (h_fresh : ∀ m, m ∈ ms → Map.find? m x = none) :
@@ -321,10 +358,8 @@ theorem Maps.find?_addInNewest_self [DecidableEq α]
     show Maps.find? [[(x, v)]] x = some v
     simp [Maps.find?, Map.find?]
   | cons m rest =>
-    simp only [Maps.addInNewest, Maps.newest, Maps.pop, Maps.push]
-    unfold Maps.find?
-    rw [Map.find?_map_append, h_fresh m (.head _)]
-    simp [Map.find?]
+    exact Maps.find?_addInNewest_cons_of m rest ([(x, v)] : Map α β) x v
+      (h_fresh m (.head _)) (Map.find?_singleton_self x v)
 
 
 /-- When `Maps.find? ms x = none`, the newest scope also has `find? = none`. -/
@@ -464,6 +499,12 @@ theorem Maps.find?_mem_toSingleMap [DecidableEq α] (ms : Maps α β) (x : α) (
       exact List.mem_append_left _ (Map.find?_mem m x w hf)
 
 
+private theorem Maps.toSingleMap_cons (m : Map α β) (rest : Maps α β) :
+    Maps.toSingleMap (m :: rest) = m ++ Maps.toSingleMap rest := by
+  unfold Maps.toSingleMap
+  rfl
+
+
 /-- If `Maps.find?` returns `none`, then `Map.find?` on the flattened map also returns `none`. -/
 theorem Maps.find?_none_toSingleMap [DecidableEq α]
     (ms : Maps α β) (x : α) (h : Maps.find? ms x = none) :
@@ -475,7 +516,7 @@ theorem Maps.find?_none_toSingleMap [DecidableEq α]
     unfold Maps.find? at h
     have m_find_is_none : m.find? x = none := by grind
     have rest_find_is_none : Maps.find? rest x = none := by grind
-    simp only [toSingleMap, Map, List.flatten_cons, Map.find?_append, m_find_is_none]
+    rw [Maps.toSingleMap_cons, Map.find?_map_append, m_find_is_none]
     exact ih rest_find_is_none
 
 
