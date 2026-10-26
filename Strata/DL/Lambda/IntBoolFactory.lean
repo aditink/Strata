@@ -31,7 +31,7 @@ section IntBoolFactory
 -- Inhabited T.IDMeta is needed for the arg_nodup proofs in WFLFunc.
 variable {T : LExprParams} [Inhabited T.IDMeta]
 
-open Strata.DL.Util (Func FuncWF FuncPrecondition TyIdentifier)
+open Strata.DL.Util (Func FuncAttr FuncWF FuncPrecondition TyIdentifier)
 
 /--
 A typeclass that bundles `mkConst` and `cevalTy` for a given
@@ -133,6 +133,7 @@ def polyUneval (n : T.Identifier) (typeArgs : List String)
     (axioms : List (LExpr T.mono) := [])
     (preconditions :
       List (FuncPrecondition (LExpr T.mono) T.Metadata) := [])
+    (attr : Array FuncAttr := #[])
     (h_nodup : List.Nodup (inputs.map (·.1.name)) := by first | decide | grind)
     (h_ta_nodup : List.Nodup typeArgs := by grind)
     (h_inputs : ∀ ty, ty ∈ ListMap.values inputs →
@@ -145,11 +146,12 @@ def polyUneval (n : T.Identifier) (typeArgs : List String)
     (h_ta_no_gen : ∀ ta, ta ∈ typeArgs → ¬ ("$__ty".toList.isPrefixOf ta.toList = true)
       := by first | decide | grind) : WFLFunc T :=
   ⟨{ name := n, typeArgs := typeArgs, inputs := inputs, output := output,
-     axioms := axioms, preconditions := preconditions }, {
+     attr := attr, axioms := axioms, preconditions := preconditions }, {
     arg_nodup := h_nodup
     concreteEval_argmatch := by intro fn _ _ _ hfn; simp at hfn
     body_or_concreteEval := by simp
     constr_no_eval := by simp
+    opaque_no_eval := by simp
     typeArgs_nodup := h_ta_nodup
     inputs_typevars_in_typeArgs := h_inputs
     output_typevars_in_typeArgs := h_output
@@ -260,6 +262,7 @@ def unaryOp (n : T.Identifier)
     output_typevars_in_typeArgs := by simp [hOutTy]
     typeArgs_no_gen_prefix := by simp
     constr_no_eval := by simp
+    opaque_no_eval := by simp
     concreteEval_freeVars := by
       intro ceval h md args res heval z hz
       simp at h; subst h
@@ -345,6 +348,7 @@ def binaryOp (n : T.Identifier)
     output_typevars_in_typeArgs := by simp [hOutTy]
     typeArgs_no_gen_prefix := by simp
     constr_no_eval := by simp
+    opaque_no_eval := by simp
     concreteEval_freeVars := by
       intro ceval h md args res heval z hz
       simp at h; subst h

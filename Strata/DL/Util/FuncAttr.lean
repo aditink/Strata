@@ -27,6 +27,10 @@ inductive FuncAttr where
   | evalIfCanonical (paramIdx : Nat)
   /-- Inline the function body when all arguments are canonical values. -/
   | inlineIfAllCanonical
+  /-- A fully applied call with canonical arguments is itself an opaque
+      canonical value. Unlike a constructor, an opaque value carries no
+      injectivity or disjointness property. -/
+  | opaque
   deriving DecidableEq, Repr, Inhabited, BEq
 
 open Std (ToFormat Format format)
@@ -38,6 +42,7 @@ instance : ToFormat FuncAttr where
     | .evalIfConstr i => f!"evalIfConstr {i}"
     | .evalIfCanonical i => f!"evalIfCanonical {i}"
     | .inlineIfAllCanonical => "inlineIfAllCanonical"
+    | .opaque => "opaque"
 
 instance : ToFormat (Array FuncAttr) where
   format attrs := Format.joinSep (attrs.toList.map format) ", "

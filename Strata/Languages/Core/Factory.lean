@@ -418,11 +418,112 @@ def mapConstFunc : WFLFunc CoreLParams :=
             (((~select : (Map %k %v) → %k → %v)
                 ((~mapConst : %v → (Map %k %v)) %1)) %0) == %1)]
     ])
+    (attr := #[.opaque])
 
-/- A `Map` selection function with type `∀k, v. Map k v → k → v`. -/
+private def mapSelectConcreteEval
+    (md : ExpressionMetadata) :
+    List Expression.Expr → Option Expression.Expr
+  | [
+      .app _ (.op _ op _) defaultValue,
+      _
+    ] =>
+      if op.name == (CoreOp.map .Const).toString then
+        some defaultValue
+      else
+        none
+  | [
+      .app _ (.app _ (.app _ (.op _ op _) base) updatedKey) updatedValue,
+      selectedKey
+    ] =>
+      if op.name == (CoreOp.map .Update).toString then
+        some (.ite md (.eq md selectedKey updatedKey) updatedValue
+          (LExpr.mkApp md (.op md (CoreOp.map .Select).toString none)
+            [base, selectedKey]))
+      else
+        none
+  | _ => none
+
+private theorem eraseMetadata_coreExpr (e : Expression.Expr) :
+    e.eraseMetadata = e := by
+  induction e <;>
+    simp_all [LExpr.eraseMetadata, LExpr.replaceMetadata]
+
+private theorem eraseMetadata_coreExprs (es : List Expression.Expr) :
+    es.map LExpr.eraseMetadata = es := by
+  induction es with
+  | nil => rfl
+  | cons e es ih =>
+    simp only [List.map, eraseMetadata_coreExpr e, ih]
+
+/- A `Map` selection function with type `∀k, v. Map k v → k → v`.
+
+The evaluator implements the two pointwise Map equations directly:
+selecting from a constant Map returns its default, and selecting from an
+updated Map reduces to an equality-guarded choice between the new value and
+the previous Map. Keeping the equality as an `ite` preserves exact semantics
+when the keys are not syntactically identical. -/
 def mapSelectFunc : WFLFunc CoreLParams :=
-  polyUneval "select" ["k", "v"]
-    [("m", mapTy mty[%k] mty[%v]), ("i", mty[%k])] mty[%v]
+  ⟨{
+    name := "select"
+    typeArgs := ["k", "v"]
+    inputs := [("m", mapTy mty[%k] mty[%v]), ("i", mty[%k])]
+    output := mty[%v]
+    concreteEval := some mapSelectConcreteEval
+  }, {
+    arg_nodup := by decide
+    typeArgs_nodup := by decide
+    inputs_typevars_in_typeArgs := by
+      intro ty hty
+      simp [ListMap.values] at hty
+      rcases hty with rfl | rfl <;> decide
+    output_typevars_in_typeArgs := by decide
+    typeArgs_no_gen_prefix := by decide
+    concreteEval_argmatch := by
+      intro fn _ args _ hfn heval
+      simp only [Option.some.injEq] at hfn
+      subst fn
+      match args with
+      | [_, _] => rfl
+      | [] | [_] | _ :: _ :: _ :: _ => simp [mapSelectConcreteEval] at heval
+    body_or_concreteEval := by simp
+    constr_no_eval := by simp
+    opaque_no_eval := by simp
+    concreteEval_eraseMetadata := by
+      intro fn hfn md1 md2 args1 args2 result hargs heval
+      simp only [Option.some.injEq] at hfn
+      subst fn
+      cases md1
+      cases md2
+      rw [eraseMetadata_coreExprs args1,
+        eraseMetadata_coreExprs args2] at hargs
+      subst args2
+      exact ⟨result, heval, rfl⟩
+    concreteEval_freeVars := by
+      intro fn hfn _ args result heval z hz
+      simp only [Option.some.injEq] at hfn
+      subst fn
+      match args with
+      | [m, k] =>
+        simp only [mapSelectConcreteEval] at heval
+        split at heval <;>
+          simp_all [LExpr.LExpr.getVars]
+        all_goals
+          rcases heval with ⟨_, hresult⟩
+          subst result
+          simp_all [LExpr.LExpr.getVars, LExpr.mkApp]
+          rcases hz with hSelected | hUpdatedKey | hUpdatedValue |
+            hBase | hSelected
+          · exact .inr hSelected
+          · exact .inl (.inr (.inl hUpdatedKey))
+          · exact .inl (.inr (.inr hUpdatedValue))
+          · exact .inl (.inl hBase)
+          · exact .inr hSelected
+      | [] | [_] | _ :: _ :: _ :: _ =>
+        simp [mapSelectConcreteEval] at heval
+  }, {
+    body_freevars := by intro body hbody; simp at hbody
+    precond_freevars := by intro p hp; simp at hp
+  }⟩
 
 /- A `Map` update function with type `∀k, v. Map k v → k → v → Map k v`. -/
 def mapUpdateFunc : WFLFunc CoreLParams :=
@@ -456,6 +557,7 @@ def mapUpdateFunc : WFLFunc CoreLParams :=
                     ((((~select : (Map %k %v) → %k → %v) %3) %2)))
                     ))))]
     ])
+    (attr := #[.opaque])
 
 /-! ## `Set` operations
 

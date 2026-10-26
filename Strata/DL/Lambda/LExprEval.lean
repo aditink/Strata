@@ -115,8 +115,13 @@ Canonical values of `LExpr`s.
 
 If `e:LExpr` is `.app`, say `e1 e2 .. en`, `e` is a canonical value if
 (1) `e1` is a constructor and `e2 .. en` are all canonical values, or
-(2) `e1` is a named function `f` (not abstraction) and `n` is less than the
+(2) `e1` is an opaque value function and `e2 .. en` are all canonical values,
+    or
+(3) `e1` is a named function `f` (not abstraction) and `n` is less than the
     number of arguments required to run the function `f`.
+
+Opaque value functions represent irreducible values without asserting the
+injectivity and disjointness properties attached to constructors.
 -/
 @[expose] def isCanonicalValue (F : @Factory T.base) (e : LExpr T) : Bool :=
   match he: e with
@@ -130,7 +135,8 @@ If `e:LExpr` is `.app`, say `e1 e2 .. en`, `e` is a canonical value if
   | e' =>
     match h: Factory.callOfLFunc F e true with
     | some (_, args, f) =>
-      (f.isConstr || Nat.blt args.length f.inputs.length) &&
+      (f.isConstr || f.attr.contains .opaque ||
+        Nat.blt args.length f.inputs.length) &&
       List.all (args.attach.map (fun ⟨ x, _⟩ =>
         have : x.sizeOf < e'.sizeOf := by
           have Hsmall := Factory.callOfLFunc_smaller h; grind
@@ -404,7 +410,8 @@ def evalWithLState (n : Nat) (σ : LState TBase) (e : LExpr TBase.mono)
   eval n σ.config.factory (Scopes.toEnv σ.state) e
 
 /-- Walk a post-eval expression looking for a stuck redex: a fully-applied
-non-constructor factory function whose arguments are all canonical values.
+factory function that is neither a constructor nor an opaque value and whose
+arguments are all canonical values.
 Such a call *should* have reduced during `eval` but didn't (e.g. missing `body`
 or `concreteEval`). Returns the stuck subexpression if found.
 
@@ -419,7 +426,8 @@ def findStuckRedex (F : @Lambda.Factory TBase) : LExpr TBase.mono → Option (LE
   | e@(.app _m fn arg) =>
     match Factory.callOfLFunc F e false with
     | some (_, args, f) =>
-      if !f.isConstr && args.all (LExpr.isCanonicalValue F) then
+      if !f.isConstr && !f.attr.contains .opaque &&
+          args.all (LExpr.isCanonicalValue F) then
         some e
       else
         -- Non-stuck call: recurse into fn and arg (structural subterms)

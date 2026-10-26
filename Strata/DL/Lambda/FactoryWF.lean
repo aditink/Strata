@@ -36,6 +36,11 @@ structure LFuncWF {T : LExprParams} (f : LFunc T) extends
       forms — they cannot be further reduced by `expand_fn` or `eval_fn`. -/
   constr_no_eval :
     f.isConstr → f.body = none ∧ f.concreteEval = none := by decide
+  /-- Opaque values must not have a body or concrete evaluator. This keeps
+      canonical opaque applications in normal form without granting them the
+      injectivity properties of constructors. -/
+  opaque_no_eval :
+    f.attr.contains .opaque → f.body = none ∧ f.concreteEval = none := by decide
   /-- Type arguments must not start with the reserved generated-variable
       prefix `$__ty` used by the type-checker. -/
   typeArgs_no_gen_prefix :
@@ -67,6 +72,17 @@ structure LFuncWF {T : LExprParams} (f : LFunc T) extends
         ceval md args = some res →
         ∀ z ∈ LExpr.LExpr.getVars res, ∃ a ∈ args, z ∈ LExpr.LExpr.getVars a := by
     intro _ h; simp [LFunc.concreteEval] at h
+
+/-- A fully applied canonical factory call is irreducible whether it is a
+constructor or is explicitly marked as an opaque value. -/
+theorem LFuncWF.normalForm_no_eval {T : LExprParams} {f : LFunc T}
+    (hWF : LFuncWF f)
+    (h : f.isConstr || f.attr.contains .opaque) :
+    f.body = none ∧ f.concreteEval = none := by
+  simp only [Bool.or_eq_true] at h
+  rcases h with hConstr | hOpaque
+  · exact hWF.constr_no_eval hConstr
+  · exact hWF.opaque_no_eval hOpaque
 
 /-- Closedness properties for LFunc — the Lambda-specific instantiation of the
     generic `FuncClosed`: the body and preconditions have no free variables

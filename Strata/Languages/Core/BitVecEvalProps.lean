@@ -312,9 +312,10 @@ private theorem bv16Binary_not_canonical
       Option.some.inj (hc.symm.trans hcall)
     obtain ⟨rfl, rfl, rfl⟩ := heq
     have hhead : (((bv16Binary name op).func.isConstr ||
+        (bv16Binary name op).func.attr.contains .opaque ||
         [x, y].length.blt (bv16Binary name op).func.inputs.length) : Bool) = false := by
-      change (false || Nat.blt 2 2) = false
-      rfl
+      simp [bv16Binary, Lambda.binaryOp]
+      decide
     rw [hhead]
     rfl
   · rename_i hc

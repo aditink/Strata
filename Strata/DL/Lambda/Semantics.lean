@@ -776,8 +776,9 @@ private theorem getLFuncCall_go_acc_change
 -- Helpers for canonical_value_not_step
 
 -- Helper: if callOfLFunc with partial app returns (op, args, f) with the
--- canonical condition (isConstr || blt), and callOfLFunc with full arity
--- also succeeds, then isConstr must be true.
+-- canonical condition (constructor, opaque value, or partial application),
+-- and callOfLFunc with full arity also succeeds, then the function must be a
+-- constructor or an opaque value.
 omit [DecidableEq Tbase.Metadata] [DecidableEq Tbase.Identifier] [DecidableEq Tbase.IDMeta] [Inhabited Tbase.IDMeta] in
 /-- If `callOfLFunc` succeeds with both `allowPartialApp := true` and `false`,
 the results are identical — both variants use the same `getLFuncCall` and the
@@ -804,19 +805,18 @@ private theorem callOfLFunc_partial_implies_full
 
 omit [DecidableEq
   Tbase.Metadata] [DecidableEq Tbase.Identifier] [DecidableEq Tbase.IDMeta] [Inhabited Tbase.IDMeta] in
-/-- When `callOfLFunc` with partial app returns a function satisfying
-`isConstr || blt args.length f.inputs.length`, and `callOfLFunc` with full
-arity also succeeds, the function must be a constructor.
-This is because full arity implies `args.length = f.inputs.length`,
-making `blt` false, so `isConstr` must hold. -/
-private theorem callOfLFunc_partial_full_isConstr
+/-- When a canonical factory call is also fully applied, it is either a
+constructor or an opaque value: the partial-application alternative is ruled
+out by full arity. -/
+private theorem callOfLFunc_partial_full_isNormalForm
     (F : @Factory Tbase) (e : LExpr Tbase.mono)
     (op : LExpr Tbase.mono) (args : List (LExpr Tbase.mono)) (f : LFunc Tbase)
     (h_partial : F.callOfLFunc e (allowPartialApp := true) = some (op, args, f))
-    (h_cond : (f.isConstr || Nat.blt args.length f.inputs.length) = true)
+    (h_cond : (f.isConstr || f.attr.contains .opaque ||
+      Nat.blt args.length f.inputs.length) = true)
     (op2 : LExpr Tbase.mono) (args2 : List (LExpr Tbase.mono)) (f2 : LFunc Tbase)
     (h_full : F.callOfLFunc e (allowPartialApp := false) = some (op2, args2, f2)) :
-    f2.isConstr = true := by
+    f2.isConstr || f2.attr.contains .opaque := by
   -- Both variants return the same result
   have h_same := callOfLFunc_partial_implies_full F e op args f h_partial (by simp [h_full])
   rw [h_same] at h_full; obtain ⟨rfl, rfl, rfl⟩ := Option.some.inj h_full
@@ -837,9 +837,11 @@ private theorem callOfLFunc_partial_full_isConstr
     split at h_same <;> simp at h_same
     rename_i h_eq; simp at h_eq
     simp only [Bool.or_eq_true] at h_cond
-    cases h_cond with
-    | inl h => exact h
-    | inr h => simp [Nat.blt] at h; rw [← h_eq, h_ble] at h; omega
+    rcases h_cond with hNormal | hPartial
+    · simpa only [Bool.or_eq_true] using hNormal
+    · simp [Nat.blt] at hPartial
+      rw [← h_eq, h_ble] at hPartial
+      omega
 
 -- Helper: for e = .app m e1 e2, if callOfLFunc (with any allowPartialApp)
 -- succeeds with nonempty args, then e2 is the last arg and thus e2 ∈ args.
@@ -1212,20 +1214,20 @@ theorem canonical_value_not_step
       split at hc
       · rename_i op_c args_c f_c h_call_partial
         simp only [Bool.and_eq_true] at hc
-        have h_isConstr := callOfLFunc_partial_full_isConstr F _ op_c args_c f_c
+        have hNormal := callOfLFunc_partial_full_isNormalForm F _ op_c args_c f_c
           h_call_partial hc.1 _ _ fn h_call
         have h_wf_fn := hWF.lfuncs_wf fn (callOfLFunc_func_mem F _ _ _ fn false h_call)
-        have ⟨h_no_body, _⟩ := h_wf_fn.constr_no_eval h_isConstr
+        have ⟨h_no_body, _⟩ := h_wf_fn.normalForm_no_eval hNormal
         simp [h_no_body] at h_body
       · simp at hc
     | eval_fn _ _ _ _ fn _ h_call h_ceval _ =>
       split at hc
       · rename_i op_c args_c f_c h_call_partial
         simp only [Bool.and_eq_true] at hc
-        have h_isConstr := callOfLFunc_partial_full_isConstr F _ op_c args_c f_c
+        have hNormal := callOfLFunc_partial_full_isNormalForm F _ op_c args_c f_c
           h_call_partial hc.1 _ _ fn h_call
         have h_wf_fn := hWF.lfuncs_wf fn (callOfLFunc_func_mem F _ _ _ fn false h_call)
-        have ⟨_, h_no_ceval⟩ := h_wf_fn.constr_no_eval h_isConstr
+        have ⟨_, h_no_ceval⟩ := h_wf_fn.normalForm_no_eval hNormal
         simp [h_no_ceval] at h_ceval
       · simp at hc
   | app m_app e1 e2 ih1 ih2 =>
@@ -1254,20 +1256,20 @@ theorem canonical_value_not_step
       split at hc
       · rename_i op_c args_c f_c h_call_partial
         simp only [Bool.and_eq_true] at hc
-        have h_isConstr := callOfLFunc_partial_full_isConstr F _ op_c args_c f_c
+        have hNormal := callOfLFunc_partial_full_isNormalForm F _ op_c args_c f_c
           h_call_partial hc.1 _ _ fn h_call
         have h_wf_fn := hWF.lfuncs_wf fn (callOfLFunc_func_mem F _ _ _ fn false h_call)
-        have ⟨h_no_body, _⟩ := h_wf_fn.constr_no_eval h_isConstr
+        have ⟨h_no_body, _⟩ := h_wf_fn.normalForm_no_eval hNormal
         simp [h_no_body] at h_body
       · simp at hc
     | eval_fn _ _ _ _ fn _ h_call h_ceval _ =>
       split at hc
       · rename_i op_c args_c f_c h_call_partial
         simp only [Bool.and_eq_true] at hc
-        have h_isConstr := callOfLFunc_partial_full_isConstr F _ op_c args_c f_c
+        have hNormal := callOfLFunc_partial_full_isNormalForm F _ op_c args_c f_c
           h_call_partial hc.1 _ _ fn h_call
         have h_wf_fn := hWF.lfuncs_wf fn (callOfLFunc_func_mem F _ _ _ fn false h_call)
-        have ⟨_, h_no_ceval⟩ := h_wf_fn.constr_no_eval h_isConstr
+        have ⟨_, h_no_ceval⟩ := h_wf_fn.normalForm_no_eval hNormal
         simp [h_no_ceval] at h_ceval
       · simp at hc
 
